@@ -15,6 +15,7 @@ import productRoutes from "./routes/products.js";
 import driverRoutes from "./routes/drivers.js";
 import adminRoutes from "./routes/admin.js";
 import transactionRoutes from "./routes/transactions.js";
+import webhookRoutes from "./routes/webhooks.js";
 import { pingDb } from "./db/pool.js";
 import { pingWooCommerce } from "./clients/woocommerce.js";
 import { pingWordpress } from "./clients/wordpress.js";
@@ -31,21 +32,16 @@ export async function buildApp() {
     bodyLimit: 1_048_576,
   });
 
-  // WooCommerce webhooks often send `application/json; charset=UTF-8`.
-  // A bare "application/json" parser alone yields 415 on those deliveries.
-  app.addContentTypeParser(
-    /^application\/json(;.*)?$/i,
-    { parseAs: "buffer" },
-    (request, body, done) => {
-      request.rawBody = body as Buffer;
-      try {
-        const json = body.length ? JSON.parse(body.toString("utf8")) : {};
-        done(null, json);
-      } catch (error) {
-        done(error as Error, undefined);
-      }
-    },
-  );
+  app.removeContentTypeParser("application/json");
+  app.addContentTypeParser("application/json", { parseAs: "buffer" }, (request, body, done) => {
+    request.rawBody = body as Buffer;
+    try {
+      const json = body.length ? JSON.parse(body.toString("utf8")) : {};
+      done(null, json);
+    } catch (error) {
+      done(error as Error, undefined);
+    }
+  });
 
   await app.register(errorHandler);
   await app.register(helmet, { global: true });
@@ -103,6 +99,7 @@ export async function buildApp() {
   await app.register(driverRoutes);
   await app.register(adminRoutes);
   await app.register(transactionRoutes);
+  await app.register(webhookRoutes);
 
   return app;
 }
