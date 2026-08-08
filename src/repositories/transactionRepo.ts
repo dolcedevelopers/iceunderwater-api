@@ -104,7 +104,7 @@ export async function upsertTransaction(row: {
   total_cents: number;
   status: TransactionRow["status"];
   method: string;
-  created_at?: Date;
+  created_at?: Date | null;
 }): Promise<TransactionRow> {
   const existing = await findTransactionByOrderId(row.wc_order_id);
   if (existing) {
@@ -124,7 +124,9 @@ export async function upsertTransaction(row: {
       { ...row, id: existing.id },
     );
     await execute(`DELETE FROM iuw_transaction_lines WHERE transaction_id = :id`, { id: existing.id });
-    return (await findTransactionById(existing.id))!;
+    const updated = await findTransactionById(existing.id);
+    if (!updated) throw new Error(`Transaction ${existing.id} missing after update`);
+    return updated;
   }
 
   await execute(
@@ -134,9 +136,15 @@ export async function upsertTransaction(row: {
      VALUES
       (:id, :wc_order_id, :reference, :customer_wp_user_id, :customer_name, :customer_email,
        :supplier_id, :supplier_name, :items, :total_cents, :status, :method, COALESCE(:created_at, UTC_TIMESTAMP(3)))`,
-    { created_at: null, ...row },
+    {
+      ...row,
+      created_at: row.created_at ?? null,
+      customer_wp_user_id: row.customer_wp_user_id ?? null,
+    },
   );
-  return (await findTransactionById(row.id))!;
+  const created = await findTransactionById(row.id);
+  if (!created) throw new Error(`Transaction ${row.id} missing after insert`);
+  return created;
 }
 
 export async function insertTransactionLines(

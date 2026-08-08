@@ -32,8 +32,8 @@ import { createWcRefund, updateWcOrderStatus } from "../clients/woocommerce.js";
 import { sendWcInvoice } from "../clients/wordpress.js";
 import { execute } from "../db/pool.js";
 
-export function mapWooStatus(status: string): "paid" | "pending" | "refunded" | "failed" {
-  const s = status.replace(/^wc-/, "");
+export function mapWooStatus(status: string | undefined | null): "paid" | "pending" | "refunded" | "failed" {
+  const s = String(status || "pending").replace(/^wc-/, "");
   switch (s) {
     case "completed":
     case "processing":
@@ -45,6 +45,7 @@ export function mapWooStatus(status: string): "paid" | "pending" | "refunded" | 
       return "failed";
     case "pending":
     case "on-hold":
+      return "pending";
     default:
       return "pending";
   }
@@ -182,9 +183,9 @@ export async function sendReceiptFor(session: SessionLike, id: string, ip?: stri
 
 /** WooCommerce webhook / poll sync — never trust a client-invented paid order. */
 export async function syncWooOrder(order: {
-  id: number;
-  number?: string;
-  status: string;
+  id: number | string;
+  number?: string | number;
+  status?: string;
   currency?: string;
   total?: string;
   date_created?: string;
@@ -198,15 +199,21 @@ export async function syncWooOrder(order: {
     total: string;
   }[];
 }) {
-  const lines = order.line_items || [];
+  const orderId = Number(order.id);
+  if (!Number.isFinite(orderId) || orderId <= 0) {
+    throw validationError("Invalid order id.");
+  }
+
+  const lines = Array.isArray(order.line_items) ? order.line_items : [];
   const enriched = [];
   for (const line of lines) {
-    const owner = await findProductOwner(line.product_id);
+    const productId = Number(line.product_id);
+    const owner = Number.isFinite(productId) ? await findProductOwner(productId) : null;
     enriched.push({
-      wc_product_id: line.product_id,
+      wc_product_id: Number.isFinite(productId) ? productId : null,
       supplier_id: owner?.supplier_id || "",
-      name: line.name,
-      quantity: line.quantity,
+      name: String(line.name || "Item"),
+      quantity: Number(line.quantity) || 0,
       line_total_cents: randsToCents(Number(line.total) || 0),
     });
   }
@@ -228,18 +235,18 @@ export async function syncWooOrder(order: {
 
   const tx = await upsertTransaction({
     id: makeId("trx"),
-    wc_order_id: order.id,
-    reference: String(order.number || order.id),
-    customer_wp_user_id: order.customer_id || null,
+    wc_order_id: orderId,
+    reference: String(order.number || orderId),
+    customer_wp_user_id: order.customer_id ? Number(order.customer_id) : null,
     customer_name: `${order.billing?.first_name || ""} ${order.billing?.last_name || ""}`.trim(),
     customer_email: normalizeEmail(order.billing?.email || ""),
     supplier_id: primarySupplierId,
     supplier_name: supplier?.name || "ICE UNDERWATER",
-    items: lines.reduce((sum, l) => sum + Number(l.quantity || 0), 0),
+    items: lines.reduce((sum, l) => sum + (Number(l.quantity) || 0), 0),
     total_cents: randsToCents(Number(order.total) || 0),
     status: mapWooStatus(order.status),
     method: order.payment_method_title || "Payfast",
-    created_at: order.date_created ? new Date(order.date_created) : undefined,
+    created_at: order.date_created ? new Date(order.date_created) : null,
   });
 
   await insertTransactionLines(
@@ -250,12 +257,17 @@ export async function syncWooOrder(order: {
   );
 
   // Auto-queue invoice on first sync when still pending receipt.
+  // Never fail the webhook if the mail queue insert has a problem.
   if (!tx.receipt_sent_at) {
-    await execute(
-      `INSERT INTO iuw_email_jobs (wc_order_id, transaction_id, status)
-       VALUES (:orderId, :txId, 'queued')`,
-      { orderId: order.id, txId: tx.id },
-    );
+    try {
+      await execute(
+        `INSERT INTO iuw_email_jobs (wc_order_id, transaction_id, status)
+         VALUES (:orderId, :txId, 'queued')`,
+        { orderId, txId: tx.id },
+      );
+    } catch {
+      // Delivery must still succeed; jobs can be retried later.
+    }
   }
 
   return mapTransaction(tx);
