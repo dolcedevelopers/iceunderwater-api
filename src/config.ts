@@ -23,7 +23,7 @@ const envSchema = z.object({
   JWT_ACCESS_TTL_SECONDS: z.coerce.number().int().positive().default(43_200),
   JWT_REFRESH_TTL_SECONDS: z.coerce.number().int().positive().default(2_592_000),
   CORS_ORIGINS: z.string().default(""),
-  WC_WEBHOOK_SECRET: z.string().min(8),
+  WC_WEBHOOK_SECRET: z.string().min(8).transform((v) => v.trim()),
   UPLOAD_MAX_BYTES: z.coerce.number().int().positive().default(5_242_880),
   DRIVER_PING_RETENTION_DAYS: z.coerce.number().int().positive().default(90),
   RATE_LIMIT_MAX: z.coerce.number().int().positive().default(200),
