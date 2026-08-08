@@ -1,0 +1,15 @@
+DROP TABLE IF EXISTS iuw_category_map;
+DROP TABLE IF EXISTS iuw_email_jobs;
+DROP TABLE IF EXISTS iuw_audit_log;
+DROP TABLE IF EXISTS iuw_refresh_tokens;
+DROP TABLE IF EXISTS iuw_transaction_lines;
+DROP TABLE IF EXISTS iuw_transactions;
+DROP TABLE IF EXISTS iuw_customer_flags;
+DROP TABLE IF EXISTS iuw_admins;
+DROP TABLE IF EXISTS iuw_delivery_events;
+DROP TABLE IF EXISTS iuw_deliveries;
+DROP TABLE IF EXISTS iuw_driver_pings;
+DROP TABLE IF EXISTS iuw_drivers;
+DROP TABLE IF EXISTS iuw_product_owners;
+DROP TABLE IF EXISTS iuw_suppliers;
+DROP TABLE IF EXISTS iuw_schema_migrations;

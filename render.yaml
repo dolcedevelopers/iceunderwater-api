@@ -1,0 +1,67 @@
+# Render Blueprint — ICE UNDERWATER API
+# Dashboard: New → Blueprint → connect this repo
+# Fill every sync:false env var in the Render dashboard before the first deploy.
+
+services:
+  - type: web
+    name: iceunderwater-api
+    runtime: node
+    plan: starter
+    region: frankfurt
+    rootDir: .
+    buildCommand: npm ci && npm run build
+    startCommand: npm run start:prod
+    healthCheckPath: /live
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: "20.18.1"
+      - key: NODE_ENV
+        value: production
+      - key: HOST
+        value: 0.0.0.0
+      - key: LOG_LEVEL
+        value: info
+      # Render injects PORT automatically — do not hardcode it.
+      - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_MIGRATE_URL
+        sync: false
+      - key: DATABASE_SSL
+        value: "true"
+      - key: WP_BASE_URL
+        value: https://iceunderwater.co.za
+      - key: WP_BRIDGE_SECRET
+        sync: false
+      # Leave empty until you know Render’s outbound IP (secret alone is enough).
+      - key: WP_BRIDGE_ALLOWED_IPS
+        value: ""
+      - key: WC_CONSUMER_KEY
+        sync: false
+      - key: WC_CONSUMER_SECRET
+        sync: false
+      - key: JWT_ACCESS_SECRET
+        generateValue: true
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+      - key: JWT_ACCESS_TTL_SECONDS
+        value: "43200"
+      - key: JWT_REFRESH_TTL_SECONDS
+        value: "2592000"
+      - key: WC_WEBHOOK_SECRET
+        sync: false
+      # Expo / native clients often send no Origin; browser previews need listing.
+      - key: CORS_ORIGINS
+        sync: false
+      - key: UPLOAD_MAX_BYTES
+        value: "5242880"
+      - key: DRIVER_PING_RETENTION_DAYS
+        value: "90"
+      - key: RATE_LIMIT_MAX
+        value: "200"
+      - key: RATE_LIMIT_WINDOW_MS
+        value: "60000"
+      - key: AUTH_RATE_LIMIT_MAX
+        value: "20"
+      - key: AUTH_RATE_LIMIT_WINDOW_MS
+        value: "900000"

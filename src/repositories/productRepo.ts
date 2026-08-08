@@ -1,0 +1,111 @@
+import type { RowDataPacket } from "mysql2";
+import { execute, query } from "../db/pool.js";
+
+export type ProductOwnerRow = RowDataPacket & {
+  wc_product_id: number;
+  supplier_id: string;
+  deleted_at: Date | null;
+};
+
+export async function listOwnedProductIds(supplierId?: string | null): Promise<ProductOwnerRow[]> {
+  if (supplierId) {
+    return query<ProductOwnerRow[]>(
+      `SELECT * FROM iuw_product_owners WHERE supplier_id = :supplierId AND deleted_at IS NULL`,
+      { supplierId },
+    );
+  }
+  return query<ProductOwnerRow[]>(`SELECT * FROM iuw_product_owners WHERE deleted_at IS NULL`);
+}
+
+export async function findProductOwner(wcProductId: number): Promise<ProductOwnerRow | null> {
+  const rows = await query<ProductOwnerRow[]>(
+    `SELECT * FROM iuw_product_owners WHERE wc_product_id = :wcProductId AND deleted_at IS NULL LIMIT 1`,
+    { wcProductId },
+  );
+  return rows[0] || null;
+}
+
+export async function upsertProductOwner(wcProductId: number, supplierId: string): Promise<void> {
+  await execute(
+    `INSERT INTO iuw_product_owners (wc_product_id, supplier_id)
+     VALUES (:wcProductId, :supplierId)
+     ON DUPLICATE KEY UPDATE supplier_id = VALUES(supplier_id), deleted_at = NULL`,
+    { wcProductId, supplierId },
+  );
+}
+
+export async function softDeleteProductOwner(wcProductId: number): Promise<void> {
+  await execute(
+    `UPDATE iuw_product_owners SET deleted_at = UTC_TIMESTAMP(3) WHERE wc_product_id = :wcProductId`,
+    { wcProductId },
+  );
+}
+
+/** Read path: join Woo posts/meta via SQL for speed. Never write wp_* from here. */
+export async function listProductsFromWp(filter: {
+  supplierId?: string | null;
+  publicOnly?: boolean;
+  productId?: number;
+}): Promise<
+  (RowDataPacket & {
+    id: number;
+    supplier_id: string;
+    name: string;
+    category: string;
+    price_cents: number;
+    stock: number;
+    description: string;
+    image: string;
+    active: number;
+    unit: string;
+  })[]
+> {
+  const clauses = ["po.deleted_at IS NULL", "p.post_type = 'product'", "p.post_status IN ('publish','draft','private')"];
+  const params: Record<string, unknown> = {};
+
+  if (filter.supplierId) {
+    clauses.push("po.supplier_id = :supplierId");
+    params.supplierId = filter.supplierId;
+  }
+  if (filter.productId) {
+    clauses.push("p.ID = :productId");
+    params.productId = filter.productId;
+  }
+  if (filter.publicOnly) {
+    clauses.push("p.post_status = 'publish'");
+    clauses.push("s.status = 'active'");
+    clauses.push("s.deleted_at IS NULL");
+  }
+
+  return query(
+    `SELECT
+      p.ID AS id,
+      po.supplier_id AS supplier_id,
+      p.post_title AS name,
+      COALESCE(tax.name, '') AS category,
+      CAST(ROUND(CAST(COALESCE(price.meta_value, '0') AS DECIMAL(20,4)) * 100) AS SIGNED) AS price_cents,
+      CAST(COALESCE(stock.meta_value, '0') AS SIGNED) AS stock,
+      COALESCE(p.post_excerpt, p.post_content, '') AS description,
+      COALESCE(img.guid, '') AS image,
+      CASE WHEN p.post_status = 'publish' THEN 1 ELSE 0 END AS active,
+      COALESCE(unit.meta_value, '') AS unit
+     FROM iuw_product_owners po
+     INNER JOIN wp_posts p ON p.ID = po.wc_product_id
+     INNER JOIN iuw_suppliers s ON s.id = po.supplier_id
+     LEFT JOIN wp_postmeta price ON price.post_id = p.ID AND price.meta_key = '_price'
+     LEFT JOIN wp_postmeta stock ON stock.post_id = p.ID AND stock.meta_key = '_stock'
+     LEFT JOIN wp_postmeta unit ON unit.post_id = p.ID AND unit.meta_key = '_iuw_unit'
+     LEFT JOIN wp_postmeta thumb ON thumb.post_id = p.ID AND thumb.meta_key = '_thumbnail_id'
+     LEFT JOIN wp_posts img ON img.ID = thumb.meta_value
+     LEFT JOIN (
+       SELECT tr.object_id, t.name
+       FROM wp_term_relationships tr
+       INNER JOIN wp_term_taxonomy tt ON tt.term_taxonomy_id = tr.term_taxonomy_id AND tt.taxonomy = 'product_cat'
+       INNER JOIN wp_terms t ON t.term_id = tt.term_id
+       GROUP BY tr.object_id
+     ) tax ON tax.object_id = p.ID
+     WHERE ${clauses.join(" AND ")}
+     ORDER BY p.post_title ASC`,
+    params,
+  );
+}

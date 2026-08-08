@@ -1,0 +1,204 @@
+openapi: 3.0.3
+info:
+  title: ICE UNDERWATER API
+  version: 1.0.0
+  description: |
+    REST API for the ICE UNDERWATER mobile app. Shares MySQL with WordPress/WooCommerce.
+    Money fields `price`, `total`, `spend` are rands; server stores cents.
+servers:
+  - url: http://localhost:4000
+security:
+  - bearerAuth: []
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    Error:
+      type: object
+      properties:
+        status: { type: integer }
+        code: { type: string }
+        message: { type: string }
+        requestId: { type: string }
+    Supplier:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        contactName: { type: string }
+        email: { type: string }
+        phone: { type: string }
+        city: { type: string }
+        logo: { type: string }
+        status: { type: string, enum: [active, pending, suspended] }
+        createdAt: { type: string, format: date-time }
+    Product:
+      type: object
+      properties:
+        id: { type: string }
+        supplierId: { type: string }
+        name: { type: string }
+        category: { type: string }
+        price: { type: number, description: Rands }
+        stock: { type: integer }
+        unit: { type: string }
+        description: { type: string }
+        image: { type: string }
+        active: { type: boolean }
+    Driver:
+      type: object
+      properties:
+        id: { type: string }
+        supplierId: { type: string }
+        name: { type: string }
+        phone: { type: string }
+        email: { type: string }
+        vehicle: { type: string }
+        registration: { type: string }
+        licence: { type: string }
+        status: { type: string, enum: [available, on-delivery, off-duty] }
+        active: { type: boolean }
+    Transaction:
+      type: object
+      properties:
+        id: { type: string }
+        reference: { type: string }
+        customerId: { type: string }
+        customerName: { type: string }
+        customerEmail: { type: string }
+        supplierId: { type: string }
+        supplierName: { type: string }
+        items: { type: integer }
+        total: { type: number, description: Rands }
+        status: { type: string, enum: [paid, pending, refunded, failed] }
+        method: { type: string }
+        createdAt: { type: string, format: date-time }
+        receiptSentAt: { type: string }
+paths:
+  /health:
+    get:
+      security: []
+      summary: Liveness + DB/WP/Woo reachability
+      responses:
+        "200": { description: OK }
+  /auth/login:
+    post:
+      security: []
+      summary: Login (customer/supplier/admin/driver)
+      responses:
+        "200": { description: Tokens + role }
+  /auth/register:
+    post:
+      security: []
+      summary: Register customer or pending supplier
+      responses:
+        "200": { description: Tokens }
+  /auth/refresh:
+    post:
+      security: []
+      summary: Rotate refresh token
+      responses:
+        "200": { description: New token pair }
+  /auth/logout:
+    post:
+      summary: Revoke refresh token
+      responses:
+        "200": { description: OK }
+  /auth/me:
+    get:
+      summary: Current principal
+      responses:
+        "200": { description: Principal }
+  /catalogue/products:
+    get:
+      security: []
+      summary: Public active products of active suppliers
+      responses:
+        "200":
+          description: Product list
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Product" }
+  /catalogue/categories:
+    get:
+      security: []
+      summary: Woo product categories (allowlist for suppliers)
+      responses:
+        "200": { description: Categories }
+  /suppliers:
+    get:
+      summary: List suppliers (scoped)
+      responses:
+        "200": { description: Supplier list }
+    post:
+      summary: Create supplier (admin)
+      responses:
+        "200": { description: Created }
+  /suppliers/{id}/brand:
+    get:
+      security: []
+      summary: Public brand card
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { description: Brand }
+  /products:
+    get:
+      summary: Managed products
+      responses:
+        "200": { description: Products }
+    post:
+      summary: Create Woo product + ownership
+      responses:
+        "200": { description: Product }
+  /drivers:
+    get:
+      summary: List drivers
+      responses:
+        "200": { description: Drivers }
+    post:
+      summary: Create driver
+      responses:
+        "200": { description: Driver }
+  /transactions:
+    get:
+      summary: List transactions (scoped); filter by reference after checkout
+      parameters:
+        - in: query
+          name: reference
+          schema: { type: string }
+        - in: query
+          name: supplierId
+          schema: { type: string }
+      responses:
+        "200":
+          description: Transactions
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Transaction" }
+  /me/receipts:
+    get:
+      summary: Caller's own receipts
+      responses:
+        "200": { description: Receipts }
+  /webhooks/woocommerce/orders:
+    post:
+      security: []
+      summary: WooCommerce order webhook (HMAC). Never client-callable.
+      responses:
+        "200": { description: Synced }
+  /admin/overview:
+    get:
+      summary: Admin dashboard aggregates
+      responses:
+        "200": { description: Overview }

@@ -1,0 +1,9 @@
+process.env.NODE_ENV = "test";
+process.env.DATABASE_URL = process.env.DATABASE_URL || "mysql://test:test@127.0.0.1:3306/test";
+process.env.WP_BASE_URL = process.env.WP_BASE_URL || "https://iceunderwater.co.za";
+process.env.WP_BRIDGE_SECRET = process.env.WP_BRIDGE_SECRET || "test-bridge-secret-32chars!!";
+process.env.WC_CONSUMER_KEY = process.env.WC_CONSUMER_KEY || "ck_test";
+process.env.WC_CONSUMER_SECRET = process.env.WC_CONSUMER_SECRET || "cs_test";
+process.env.JWT_ACCESS_SECRET = process.env.JWT_ACCESS_SECRET || "test-access-secret-min-32-characters-long";
+process.env.JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || "test-refresh-secret-min-32-characters-long";
+process.env.WC_WEBHOOK_SECRET = process.env.WC_WEBHOOK_SECRET || "webhook-secret";
