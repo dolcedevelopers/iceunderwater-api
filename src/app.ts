@@ -31,15 +31,21 @@ export async function buildApp() {
     bodyLimit: 1_048_576,
   });
 
-  app.addContentTypeParser("application/json", { parseAs: "buffer" }, (request, body, done) => {
-    request.rawBody = body as Buffer;
-    try {
-      const json = body.length ? JSON.parse(body.toString("utf8")) : {};
-      done(null, json);
-    } catch (error) {
-      done(error as Error, undefined);
-    }
-  });
+  // WooCommerce webhooks often send `application/json; charset=UTF-8`.
+  // A bare "application/json" parser alone yields 415 on those deliveries.
+  app.addContentTypeParser(
+    /^application\/json(;.*)?$/i,
+    { parseAs: "buffer" },
+    (request, body, done) => {
+      request.rawBody = body as Buffer;
+      try {
+        const json = body.length ? JSON.parse(body.toString("utf8")) : {};
+        done(null, json);
+      } catch (error) {
+        done(error as Error, undefined);
+      }
+    },
+  );
 
   await app.register(errorHandler);
   await app.register(helmet, { global: true });
