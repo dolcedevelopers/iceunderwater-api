@@ -13,9 +13,27 @@ function verifyWooSignature(rawBody: string, signature: string | undefined): boo
   return timingSafeEqual(a, b);
 }
 
+/** Woo save/test ping is often `webhook_id=1` (form) or `{ "webhook_id": 1 }` (JSON). */
+function parseWooBody(raw: string): Record<string, unknown> {
+  const text = raw.trim();
+  if (!text) return {};
+
+  if (text.startsWith("{") || text.startsWith("[")) {
+    return JSON.parse(text) as Record<string, unknown>;
+  }
+
+  // application/x-www-form-urlencoded (Woo ping)
+  const params = new URLSearchParams(text);
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of params.entries()) {
+    const asNumber = Number(value);
+    out[key] = Number.isFinite(asNumber) && String(asNumber) === value ? asNumber : value;
+  }
+  return out;
+}
+
 function isWooPing(payload: Record<string, unknown> | null | undefined): boolean {
   if (!payload || typeof payload !== "object") return false;
-  // Woo save/test ping is typically: { "webhook_id": 123 }
   if ("webhook_id" in payload && !("line_items" in payload) && payload.status === undefined) {
     return !("id" in payload) || Object.keys(payload).length <= 2;
   }
@@ -30,14 +48,8 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
   app.removeContentTypeParser("application/json");
   app.addContentTypeParser("*", { parseAs: "buffer" }, (request, body, done) => {
     request.rawBody = body as Buffer;
-    // Do not trim — Woo signs the exact raw bytes.
-    const text = body.toString("utf8");
-    if (!text) {
-      done(null, {});
-      return;
-    }
     try {
-      done(null, JSON.parse(text));
+      done(null, parseWooBody(body.toString("utf8")));
     } catch (error) {
       done(error as Error, undefined);
     }
@@ -66,16 +78,14 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
       throw accessDenied("Invalid webhook signature.");
     }
 
-    const payload = (
-      typeof request.body === "string" ? JSON.parse(request.body) : request.body
-    ) as Record<string, unknown> | null;
+    const payload = (request.body || {}) as Record<string, unknown>;
 
     if (isWooPing(payload)) {
       return reply.code(200).send({ received: true, ping: true });
     }
 
-    const orderId = payload && "id" in payload ? Number(payload.id) : NaN;
-    if (!payload || !Number.isFinite(orderId)) {
+    const orderId = "id" in payload ? Number(payload.id) : NaN;
+    if (!Number.isFinite(orderId)) {
       throw validationError("Invalid order payload.");
     }
 
