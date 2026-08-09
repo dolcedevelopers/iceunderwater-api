@@ -23,7 +23,9 @@ export async function execute(
   sql: string,
   params?: Record<string, unknown> | unknown[],
 ): Promise<ResultSetHeader> {
-  const [result] = await getPool().execute<ResultSetHeader>(sql, params as never);
+  // mysql2 prepared `execute()` only supports positional `?` placeholders.
+  // This codebase uses named `:param` bindings, which require `query()`.
+  const [result] = await getPool().query<ResultSetHeader>(sql, params as never);
   return result;
 }
 
