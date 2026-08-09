@@ -3,7 +3,11 @@ import { z } from "zod";
 import { requireAuth } from "../plugins/auth.js";
 import { login, mePayload, register } from "../services/identityService.js";
 import { revokeRefreshToken, rotateRefreshToken } from "../auth/tokens.js";
-import { authRequired } from "../lib/errors.js";
+import { authRequired, accessDenied, validationError } from "../lib/errors.js";
+import { config } from "../config.js";
+import { makeId, normalizeEmail } from "../lib/ids.js";
+import { createWpUserViaBridge } from "../clients/wordpress.js";
+import { insertAdmin, listAdmins } from "../repositories/adminRepo.js";
 
 const loginSchema = z
   .object({
@@ -93,6 +97,43 @@ const authRoutes: FastifyPluginAsync = async (app) => {
   app.get("/auth/me", async (request) => {
     const principal = requireAuth(request);
     return { user: mePayload(principal) };
+  });
+
+  /** First-owner bootstrap when iuw_admins is empty. Requires WP bridge secret. */
+  app.post("/auth/bootstrap-owner", async (request) => {
+    const secret = request.headers["x-iuw-bridge-secret"];
+    if (typeof secret !== "string" || secret !== config.WP_BRIDGE_SECRET) {
+      throw accessDenied("Forbidden");
+    }
+    const admins = await listAdmins();
+    if (admins.length > 0) throw accessDenied("An owner already exists.");
+
+    const body = z
+      .object({
+        email: z.string().email(),
+        password: z.string().min(8),
+        name: z.string().min(1).default("Owner"),
+      })
+      .strict()
+      .parse(request.body);
+
+    const email = normalizeEmail(body.email);
+    if (!email) throw validationError("Valid email is required.");
+
+    const wpUser = await createWpUserViaBridge({
+      email,
+      password: body.password,
+      displayName: body.name,
+      roles: ["iuw_admin"],
+    });
+    const row = await insertAdmin({
+      id: makeId("adm"),
+      wp_user_id: wpUser.wpUserId,
+      name: body.name.trim(),
+      email,
+      role: "owner",
+    });
+    return { id: row.id, email: row.email, role: row.role, wpUserId: row.wp_user_id };
   });
 };
 

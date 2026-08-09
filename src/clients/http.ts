@@ -29,9 +29,22 @@ export async function httpJson<T>(url: string, options: HttpJsonOptions = {}): P
       });
       const payload = (await response.json().catch(() => ({}))) as T & { message?: string; code?: string };
       if (!response.ok) {
-        throw new AppError(502, "UPSTREAM_ERROR", payload.message || `Upstream error ${response.status}`, {
-          expose: true,
-        });
+        const code =
+          response.status === 409
+            ? "CONFLICT"
+            : response.status === 401 || response.status === 403
+              ? "ACCESS_DENIED"
+              : response.status === 404
+                ? "NOT_FOUND"
+                : response.status === 400
+                  ? "VALIDATION_ERROR"
+                  : "UPSTREAM_ERROR";
+        throw new AppError(
+          response.status >= 400 && response.status < 600 ? response.status : 502,
+          code,
+          payload.message || `Upstream error ${response.status}`,
+          { expose: true },
+        );
       }
       return payload;
     } catch (error) {
