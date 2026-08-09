@@ -49,6 +49,8 @@ export async function httpJson<T>(url: string, options: HttpJsonOptions = {}): P
       return payload;
     } catch (error) {
       lastError = error;
+      // Do not retry client/auth conflicts — only transient upstream failures.
+      if (error instanceof AppError && error.status < 500) throw error;
       if (attempt === retries) break;
       await new Promise((r) => setTimeout(r, 200 * (attempt + 1)));
     } finally {

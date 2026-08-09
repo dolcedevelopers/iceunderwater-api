@@ -1,7 +1,59 @@
 import { makeId, normalizeEmail } from "../lib/ids.js";
 import { createWpUserViaBridge, verifyWpCredentials } from "../clients/wordpress.js";
 import { findAdminByWpUserId, insertAdmin, listAdmins } from "../repositories/adminRepo.js";
-import { AppError } from "../lib/errors.js";
+import { AppError, conflict } from "../lib/errors.js";
+
+export async function createFirstOwner(input: {
+  email: string;
+  password: string;
+  name?: string;
+}): Promise<{ id: string; email: string; role: string; wpUserId: number }> {
+  const existing = await listAdmins();
+  if (existing.length > 0) throw conflict("An owner already exists.");
+
+  const email = normalizeEmail(input.email);
+  const name = (input.name || "Owner").trim();
+  if (!email || !input.password || input.password.length < 8) {
+    throw new AppError(400, "VALIDATION_ERROR", "Valid email and password (min 8) are required.");
+  }
+
+  let wpUser;
+  try {
+    wpUser = await createWpUserViaBridge({
+      email,
+      password: input.password,
+      displayName: name,
+      roles: ["iuw_admin"],
+    });
+  } catch (error) {
+    const status = error instanceof AppError ? error.status : 0;
+    if (status !== 409) throw error;
+    wpUser = await verifyWpCredentials(email, input.password);
+    const roles = wpUser.roles.map((r) => r.toLowerCase());
+    if (!roles.includes("iuw_admin") && !roles.includes("administrator")) {
+      throw new AppError(
+        409,
+        "CONFLICT",
+        `WordPress user ${email} exists but lacks iuw_admin. Add the role in WP, then retry.`,
+      );
+    }
+  }
+
+  const linked = await findAdminByWpUserId(wpUser.wpUserId);
+  if (linked) {
+    return { id: linked.id, email: linked.email, role: linked.role, wpUserId: linked.wp_user_id };
+  }
+
+  const row = await insertAdmin({
+    id: makeId("adm"),
+    wp_user_id: wpUser.wpUserId,
+    name,
+    email,
+    role: "owner",
+  });
+
+  return { id: row.id, email: row.email, role: row.role, wpUserId: row.wp_user_id };
+}
 
 /**
  * One-shot first owner seed for empty installs.
@@ -23,47 +75,10 @@ export async function seedFirstOwnerIfConfigured(log?: {
     return { seeded: false };
   }
 
-  const email = normalizeEmail(emailRaw);
-  if (!email || password.length < 8) {
-    throw new Error("SEED_ADMIN_EMAIL/PASSWORD invalid (password min 8 chars).");
-  }
-
-  let wpUser;
-  try {
-    wpUser = await createWpUserViaBridge({
-      email,
-      password,
-      displayName: name,
-      roles: ["iuw_admin"],
-    });
-  } catch (error) {
-    const status = error instanceof AppError ? error.status : 0;
-    if (status !== 409) throw error;
-    // Account already in WordPress — verify password and link as owner.
-    wpUser = await verifyWpCredentials(email, password);
-    if (!wpUser.roles.map((r) => r.toLowerCase()).includes("iuw_admin") &&
-        !wpUser.roles.map((r) => r.toLowerCase()).includes("administrator")) {
-      throw new Error(
-        `WordPress user ${email} exists but lacks iuw_admin/administrator. Add the role in WP, then restart.`,
-      );
-    }
-  }
-
-  const linked = await findAdminByWpUserId(wpUser.wpUserId);
-  if (linked) return { seeded: false, email, id: linked.id };
-
-  const row = await insertAdmin({
-    id: makeId("adm"),
-    wp_user_id: wpUser.wpUserId,
-    name,
-    email,
-    role: "owner",
-  });
-
+  const result = await createFirstOwner({ email: emailRaw, password, name });
   log?.warn(
-    { email, id: row.id, wpUserId: wpUser.wpUserId },
+    { email: result.email, id: result.id, wpUserId: result.wpUserId },
     "Seeded first owner admin — remove SEED_ADMIN_EMAIL and SEED_ADMIN_PASSWORD from the host env now",
   );
-
-  return { seeded: true, email, id: row.id };
+  return { seeded: true, email: result.email, id: result.id };
 }

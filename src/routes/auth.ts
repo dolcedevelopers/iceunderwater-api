@@ -3,11 +3,9 @@ import { z } from "zod";
 import { requireAuth } from "../plugins/auth.js";
 import { login, mePayload, register } from "../services/identityService.js";
 import { revokeRefreshToken, rotateRefreshToken } from "../auth/tokens.js";
-import { authRequired, accessDenied, validationError } from "../lib/errors.js";
+import { authRequired, accessDenied } from "../lib/errors.js";
 import { config } from "../config.js";
-import { makeId, normalizeEmail } from "../lib/ids.js";
-import { createWpUserViaBridge } from "../clients/wordpress.js";
-import { insertAdmin, listAdmins } from "../repositories/adminRepo.js";
+import { createFirstOwner } from "../services/seedOwner.js";
 
 const loginSchema = z
   .object({
@@ -105,8 +103,6 @@ const authRoutes: FastifyPluginAsync = async (app) => {
     if (typeof secret !== "string" || secret !== config.WP_BRIDGE_SECRET) {
       throw accessDenied("Forbidden");
     }
-    const admins = await listAdmins();
-    if (admins.length > 0) throw accessDenied("An owner already exists.");
 
     const body = z
       .object({
@@ -117,23 +113,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       .strict()
       .parse(request.body);
 
-    const email = normalizeEmail(body.email);
-    if (!email) throw validationError("Valid email is required.");
-
-    const wpUser = await createWpUserViaBridge({
-      email,
-      password: body.password,
-      displayName: body.name,
-      roles: ["iuw_admin"],
-    });
-    const row = await insertAdmin({
-      id: makeId("adm"),
-      wp_user_id: wpUser.wpUserId,
-      name: body.name.trim(),
-      email,
-      role: "owner",
-    });
-    return { id: row.id, email: row.email, role: row.role, wpUserId: row.wp_user_id };
+    return createFirstOwner(body);
   });
 };
 
