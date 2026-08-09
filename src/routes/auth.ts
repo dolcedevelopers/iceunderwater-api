@@ -3,7 +3,7 @@ import { z } from "zod";
 import { requireAuth } from "../plugins/auth.js";
 import { login, mePayload, register } from "../services/identityService.js";
 import { revokeRefreshToken, rotateRefreshToken } from "../auth/tokens.js";
-import { authRequired, accessDenied } from "../lib/errors.js";
+import { authRequired, accessDenied, AppError } from "../lib/errors.js";
 import { config } from "../config.js";
 import { createFirstOwner } from "../services/seedOwner.js";
 
@@ -113,7 +113,14 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       .strict()
       .parse(request.body);
 
-    return createFirstOwner(body);
+    try {
+      return await createFirstOwner(body);
+    } catch (error) {
+      if (error instanceof AppError) throw error;
+      const message = error instanceof Error ? error.message : "Bootstrap failed.";
+      request.log.error({ err: error }, "bootstrap-owner failed");
+      throw new AppError(500, "INTERNAL_ERROR", message, { expose: true });
+    }
   });
 };
 
