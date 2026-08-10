@@ -11,6 +11,7 @@ export type SupplierRow = RowDataPacket & {
   city: string;
   logo_url: string;
   status: "active" | "pending" | "suspended";
+  markup_percent: number;
   created_at: Date;
   deleted_at: Date | null;
 };
@@ -81,6 +82,7 @@ export async function updateSupplier(
     city: string;
     logo_url: string;
     status: SupplierRow["status"];
+    markup_percent: number;
     wp_user_id: number;
   }>,
 ): Promise<SupplierRow | null> {

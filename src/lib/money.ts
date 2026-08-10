@@ -20,3 +20,10 @@ export function addCents(...parts: number[]): Cents {
   }
   return total as Cents;
 }
+
+/** Apply a percent markup to a cost in cents (e.g. 15 → +15%). */
+export function sellingCentsFromCost(costCents: number, markupPercent: number): Cents {
+  if (!Number.isInteger(costCents) || costCents < 0) throw new Error("Invalid cost cents");
+  if (!Number.isFinite(markupPercent) || markupPercent < 0) throw new Error("Invalid markup");
+  return Math.round(costCents * (1 + markupPercent / 100)) as Cents;
+}

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "vitest";
-import { addCents, centsToRands, randsToCents } from "../src/lib/money.js";
+import { addCents, centsToRands, randsToCents, sellingCentsFromCost } from "../src/lib/money.js";
 
 describe("money cents discipline", () => {
   it("converts without floats in arithmetic", () => {
@@ -13,5 +13,11 @@ describe("money cents discipline", () => {
 
   it("rejects non-integer cents", () => {
     assert.throws(() => centsToRands(1.5));
+  });
+
+  it("applies supplier markup to cost", () => {
+    assert.equal(sellingCentsFromCost(2500, 0), 2500);
+    assert.equal(sellingCentsFromCost(2500, 15), 2875);
+    assert.equal(sellingCentsFromCost(1999, 10), 2199);
   });
 });

@@ -22,6 +22,7 @@ const createSchema = z
     phone: z.string().optional(),
     city: z.string().optional(),
     password: z.string().min(8).optional(),
+    markupPercent: z.number().min(0).max(1000).optional(),
   })
   .strict();
 
@@ -34,6 +35,8 @@ const patchSchema = z
     city: z.string().optional(),
     logo: z.string().optional(),
     status: z.enum(["active", "pending", "suspended"]).optional(),
+    /** Admin-only: percent markup on supplier cost (e.g. 15 = +15%). */
+    markupPercent: z.number().min(0).max(1000).optional(),
   })
   .strict();
 

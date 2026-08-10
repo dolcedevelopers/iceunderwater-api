@@ -9,6 +9,8 @@ export type SupplierDto = {
   city: string;
   logo: string;
   status: "active" | "pending" | "suspended";
+  /** Admin-set markup % applied to supplier cost → shop selling price. */
+  markupPercent: number;
   createdAt: string;
 };
 
@@ -17,7 +19,11 @@ export type ProductDto = {
   supplierId: string;
   name: string;
   category: string;
+  /** Supplier cost / loaded price (what the company sets). */
+  costPrice: number;
+  /** Customer-facing selling price after markup (Woo regular_price). */
   price: number;
+  markupPercent: number;
   stock: number;
   unit: string;
   description: string;
@@ -90,6 +96,7 @@ export function mapSupplier(row: {
   city: string;
   logo_url: string;
   status: SupplierDto["status"];
+  markup_percent?: number | string | null;
   created_at: Date | string;
 }): SupplierDto {
   return {
@@ -101,6 +108,7 @@ export function mapSupplier(row: {
     city: row.city,
     logo: row.logo_url || "",
     status: row.status,
+    markupPercent: Number(row.markup_percent) || 0,
     createdAt: toIso(row.created_at),
   };
 }

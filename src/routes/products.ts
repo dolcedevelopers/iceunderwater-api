@@ -15,18 +15,26 @@ const createSchema = z
     supplierId: z.string().optional(),
     name: z.string().min(1),
     category: z.string().optional(),
-    price: z.number(),
+    /** Supplier cost / loaded price. Prefer this over price. */
+    costPrice: z.number().optional(),
+    /** Back-compat: treated as cost when costPrice omitted. */
+    price: z.number().optional(),
     stock: z.number().int().optional(),
     unit: z.string().optional(),
     description: z.string().optional(),
     active: z.boolean().optional(),
   })
-  .strict();
+  .strict()
+  .refine((b) => b.costPrice != null || b.price != null, {
+    message: "costPrice or price is required",
+    path: ["costPrice"],
+  });
 
 const patchSchema = z
   .object({
     name: z.string().optional(),
     category: z.string().optional(),
+    costPrice: z.number().optional(),
     price: z.number().optional(),
     stock: z.number().int().optional(),
     unit: z.string().optional(),

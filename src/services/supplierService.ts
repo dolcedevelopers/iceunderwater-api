@@ -24,6 +24,7 @@ import { listOwnedProductIds } from "../repositories/productRepo.js";
 import { listTransactions, supplierSettlement } from "../repositories/transactionRepo.js";
 import { createWpUserViaBridge } from "../clients/wordpress.js";
 import { uploadImageBuffer } from "./mediaService.js";
+import { repriceSupplierProducts } from "./productService.js";
 
 export async function listSuppliersFor(session: SessionLike) {
   requireRole(session, ROLES.ADMIN, ROLES.SUPPLIER);
@@ -55,6 +56,7 @@ export async function createSupplierFor(
     phone?: string;
     city?: string;
     password?: string;
+    markupPercent?: number;
   },
   ip?: string,
 ) {
@@ -83,8 +85,23 @@ export async function createSupplierFor(
     city: data.city?.trim() || "",
     status: "pending",
   });
-  await writeAudit({ session, action: "supplier.create", targetType: "supplier", targetId: row.id, ip, after: mapSupplier(row) });
-  return mapSupplier(row);
+
+  const markup =
+    typeof data.markupPercent === "number" && Number.isFinite(data.markupPercent)
+      ? Math.max(0, data.markupPercent)
+      : 0;
+  const withMarkup =
+    markup > 0 ? (await updateSupplier(row.id, { markup_percent: markup })) || row : row;
+
+  await writeAudit({
+    session,
+    action: "supplier.create",
+    targetType: "supplier",
+    targetId: withMarkup.id,
+    ip,
+    after: mapSupplier(withMarkup),
+  });
+  return mapSupplier(withMarkup);
 }
 
 export async function updateSupplierFor(
@@ -98,9 +115,17 @@ export async function updateSupplierFor(
   assertOwnsRecord(session, existing ? { supplierId: existing.id } : null, "supplier");
 
   const safe: Record<string, unknown> = { ...changes };
-  if (!isAdmin(session)) delete safe.status;
+  if (!isAdmin(session)) {
+    delete safe.status;
+    delete safe.markupPercent;
+  }
 
   const before = mapSupplier(existing!);
+  const markupPercent =
+    isAdmin(session) && typeof safe.markupPercent === "number" && Number.isFinite(safe.markupPercent)
+      ? Math.max(0, Number(safe.markupPercent))
+      : undefined;
+
   const updated = await updateSupplier(scope!, {
     name: typeof safe.name === "string" ? safe.name : undefined,
     contact_name: typeof safe.contactName === "string" ? safe.contactName : undefined,
@@ -112,8 +137,14 @@ export async function updateSupplierFor(
       isAdmin(session) && (safe.status === "active" || safe.status === "pending" || safe.status === "suspended")
         ? safe.status
         : undefined,
+    markup_percent: markupPercent,
   });
   if (!updated) throw notFound();
+
+  if (markupPercent != null && markupPercent !== Number(existing!.markup_percent || 0)) {
+    await repriceSupplierProducts(scope!);
+  }
+
   const after = mapSupplier(updated);
   await writeAudit({
     session,

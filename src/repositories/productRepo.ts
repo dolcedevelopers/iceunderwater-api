@@ -53,6 +53,8 @@ export async function listProductsFromWp(filter: {
     name: string;
     category: string;
     price_cents: number;
+    cost_cents: number;
+    markup_percent: number;
     stock: number;
     description: string;
     image: string;
@@ -84,6 +86,13 @@ export async function listProductsFromWp(filter: {
       p.post_title AS name,
       COALESCE(tax.name, '') AS category,
       CAST(ROUND(CAST(COALESCE(price.meta_value, '0') AS DECIMAL(20,4)) * 100) AS SIGNED) AS price_cents,
+      CAST(
+        COALESCE(
+          NULLIF(cost.meta_value, ''),
+          ROUND(CAST(COALESCE(price.meta_value, '0') AS DECIMAL(20,4)) * 100)
+        ) AS SIGNED
+      ) AS cost_cents,
+      CAST(COALESCE(s.markup_percent, 0) AS DECIMAL(8,2)) AS markup_percent,
       CAST(COALESCE(stock.meta_value, '0') AS SIGNED) AS stock,
       COALESCE(p.post_excerpt, p.post_content, '') AS description,
       COALESCE(img.guid, '') AS image,
@@ -93,6 +102,7 @@ export async function listProductsFromWp(filter: {
      INNER JOIN wp_posts p ON p.ID = po.wc_product_id
      INNER JOIN iuw_suppliers s ON s.id = po.supplier_id
      LEFT JOIN wp_postmeta price ON price.post_id = p.ID AND price.meta_key = '_price'
+     LEFT JOIN wp_postmeta cost ON cost.post_id = p.ID AND cost.meta_key = '_iuw_cost_cents'
      LEFT JOIN wp_postmeta stock ON stock.post_id = p.ID AND stock.meta_key = '_stock'
      LEFT JOIN wp_postmeta unit ON unit.post_id = p.ID AND unit.meta_key = '_iuw_unit'
      LEFT JOIN wp_postmeta thumb ON thumb.post_id = p.ID AND thumb.meta_key = '_thumbnail_id'
