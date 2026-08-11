@@ -41,6 +41,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       expiresIn: Number(process.env.JWT_ACCESS_TTL_SECONDS || 43200),
       role: result.principal.role,
       supplierId: result.principal.supplierId || null,
+      driverId: result.principal.driverId || null,
       adminRole: result.principal.adminRole || null,
       user: {
         id: String(result.principal.wpUserId || result.principal.driverId || ""),
@@ -80,6 +81,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         token: result.accessToken,
         role: result.principal.role,
         supplierId: result.principal.supplierId || null,
+        driverId: result.principal.driverId || null,
       };
     } catch {
       throw authRequired("Please sign in again.");
