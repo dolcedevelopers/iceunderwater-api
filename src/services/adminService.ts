@@ -1,4 +1,11 @@
-import { requireAdmin, type SessionLike } from "../authz/permissions.js";
+import {
+  isAdmin,
+  isCustomer,
+  requireAdmin,
+  requireRole,
+  ROLES,
+  type SessionLike,
+} from "../authz/permissions.js";
 import { accessDenied, conflict, validationError } from "../lib/errors.js";
 import { makeId, normalizeEmail } from "../lib/ids.js";
 import { centsToRands } from "../lib/money.js";
@@ -17,6 +24,89 @@ import { listTransactions } from "../repositories/transactionRepo.js";
 import { createWpUserViaBridge } from "../clients/wordpress.js";
 import { execute, query } from "../db/pool.js";
 import type { RowDataPacket } from "mysql2";
+
+async function upsertUserMeta(userId: number, metaKey: string, metaValue: string) {
+  const existing = await query<(RowDataPacket & { umeta_id: number })[]>(
+    `SELECT umeta_id FROM wp_usermeta WHERE user_id = :userId AND meta_key = :metaKey LIMIT 1`,
+    { userId, metaKey },
+  );
+  if (existing[0]?.umeta_id) {
+    await execute(`UPDATE wp_usermeta SET meta_value = :metaValue WHERE umeta_id = :id`, {
+      metaValue,
+      id: existing[0].umeta_id,
+    });
+    return;
+  }
+  await execute(`INSERT INTO wp_usermeta (user_id, meta_key, meta_value) VALUES (:userId, :metaKey, :metaValue)`, {
+    userId,
+    metaKey,
+    metaValue,
+  });
+}
+
+async function loadCustomerRow(customerId: number): Promise<CustomerDto | null> {
+  const rows = await query<
+    (RowDataPacket & {
+      id: number;
+      name: string;
+      email: string;
+      phone: string;
+      city: string;
+      created_at: Date;
+      status: "active" | "blocked";
+      orders: number;
+      spend_cents: number;
+      deleted_at: Date | null;
+    })[]
+  >(
+    `SELECT
+      u.ID AS id,
+      u.display_name AS name,
+      u.user_email AS email,
+      COALESCE(phone.meta_value, '') AS phone,
+      COALESCE(city.meta_value, '') AS city,
+      u.user_registered AS created_at,
+      COALESCE(f.status, 'active') AS status,
+      f.deleted_at AS deleted_at,
+      COALESCE(stats.orders, 0) AS orders,
+      COALESCE(stats.spend_cents, 0) AS spend_cents
+     FROM wp_users u
+     LEFT JOIN iuw_customer_flags f ON f.wp_user_id = u.ID
+     LEFT JOIN wp_usermeta phone ON phone.user_id = u.ID AND phone.meta_key = 'billing_phone'
+     LEFT JOIN wp_usermeta city ON city.user_id = u.ID AND city.meta_key = 'billing_city'
+     LEFT JOIN (
+       SELECT customer_wp_user_id AS uid, COUNT(*) AS orders,
+              SUM(CASE WHEN status = 'paid' THEN total_cents ELSE 0 END) AS spend_cents
+       FROM iuw_transactions
+       WHERE deleted_at IS NULL AND customer_wp_user_id IS NOT NULL
+       GROUP BY customer_wp_user_id
+     ) stats ON stats.uid = u.ID
+     WHERE u.ID = :id
+     LIMIT 1`,
+    { id: customerId },
+  );
+  const row = rows[0];
+  if (!row || row.deleted_at) return null;
+  return {
+    id: String(row.id),
+    name: row.name,
+    email: row.email,
+    phone: row.phone,
+    city: row.city,
+    orders: Number(row.orders) || 0,
+    spend: centsToRands(Number(row.spend_cents) || 0),
+    status: row.status === "blocked" ? "blocked" : "active",
+    createdAt: new Date(row.created_at).toISOString(),
+  };
+}
+
+function assertCanManageCustomer(session: SessionLike, customerId: string) {
+  requireRole(session, ROLES.ADMIN, ROLES.CUSTOMER);
+  if (isAdmin(session)) return;
+  if (!isCustomer(session) || String(session!.wpUserId) !== String(customerId)) {
+    throw accessDenied("You can only update your own profile.");
+  }
+}
 
 export async function listAdminsFor(session: SessionLike) {
   requireAdmin(session);
@@ -174,6 +264,10 @@ export async function listCustomersFor(session: SessionLike): Promise<CustomerDt
      ) stats ON stats.uid = u.ID
      INNER JOIN wp_usermeta caps ON caps.user_id = u.ID AND caps.meta_key = 'wp_capabilities'
      WHERE caps.meta_value LIKE '%customer%'
+       AND NOT EXISTS (
+         SELECT 1 FROM iuw_customer_flags df
+         WHERE df.wp_user_id = u.ID AND df.deleted_at IS NOT NULL
+       )
      ORDER BY u.user_registered DESC
      LIMIT 500`,
   );
@@ -191,31 +285,84 @@ export async function listCustomersFor(session: SessionLike): Promise<CustomerDt
   }));
 }
 
+export async function getCustomerFor(session: SessionLike, customerId: string): Promise<CustomerDto> {
+  assertCanManageCustomer(session, customerId);
+  const dto = await loadCustomerRow(Number(customerId));
+  if (!dto) throw accessDenied("That customer is not available.");
+  return dto;
+}
+
 export async function updateCustomerFor(
   session: SessionLike,
   customerId: string,
-  changes: { status?: "active" | "blocked"; notes?: string },
+  changes: {
+    status?: "active" | "blocked";
+    notes?: string;
+    name?: string;
+    email?: string;
+    phone?: string;
+    city?: string;
+  },
   ip?: string,
 ) {
-  requireAdmin(session);
-  if (changes.status !== "active" && changes.status !== "blocked") {
-    throw validationError("status must be active or blocked");
+  assertCanManageCustomer(session, customerId);
+  const id = Number(customerId);
+  const existing = await loadCustomerRow(id);
+  if (!existing) throw accessDenied("That customer is not available.");
+
+  if (!isAdmin(session)) {
+    if (changes.status != null || changes.notes != null) {
+      throw accessDenied("Only administrators can change account status.");
+    }
   }
-  await execute(
-    `INSERT INTO iuw_customer_flags (wp_user_id, status, notes)
-     VALUES (:id, :status, :notes)
-     ON DUPLICATE KEY UPDATE status = VALUES(status), notes = VALUES(notes), deleted_at = NULL`,
-    { id: Number(customerId), status: changes.status, notes: changes.notes || "" },
-  );
+
+  if (typeof changes.name === "string" && changes.name.trim()) {
+    await execute(`UPDATE wp_users SET display_name = :name WHERE ID = :id`, {
+      name: changes.name.trim(),
+      id,
+    });
+  }
+
+  if (typeof changes.email === "string" && changes.email.trim()) {
+    const email = normalizeEmail(changes.email);
+    const clash = await query<(RowDataPacket & { ID: number })[]>(
+      `SELECT ID FROM wp_users WHERE user_email = :email AND ID <> :id LIMIT 1`,
+      { email, id },
+    );
+    if (clash[0]) throw conflict("That email is already in use.");
+    await execute(`UPDATE wp_users SET user_email = :email, user_login = :email WHERE ID = :id`, {
+      email,
+      id,
+    });
+  }
+
+  if (typeof changes.phone === "string") {
+    await upsertUserMeta(id, "billing_phone", changes.phone.trim());
+  }
+  if (typeof changes.city === "string") {
+    await upsertUserMeta(id, "billing_city", changes.city.trim());
+  }
+
+  if (isAdmin(session) && (changes.status === "active" || changes.status === "blocked")) {
+    await execute(
+      `INSERT INTO iuw_customer_flags (wp_user_id, status, notes)
+       VALUES (:id, :status, :notes)
+       ON DUPLICATE KEY UPDATE status = VALUES(status), notes = VALUES(notes), deleted_at = NULL`,
+      { id, status: changes.status, notes: changes.notes || "" },
+    );
+  }
+
+  const after = await loadCustomerRow(id);
   await writeAudit({
     session,
     action: "customer.update",
     targetType: "customer",
     targetId: customerId,
     ip,
-    after: changes,
+    before: existing,
+    after,
   });
-  return { id: customerId, ...changes };
+  return after!;
 }
 
 export async function createCustomerFor(
@@ -230,6 +377,8 @@ export async function createCustomerFor(
     displayName: data.name,
     roles: ["customer"],
   });
+  if (data.phone?.trim()) await upsertUserMeta(wpUser.wpUserId, "billing_phone", data.phone.trim());
+  if (data.city?.trim()) await upsertUserMeta(wpUser.wpUserId, "billing_city", data.city.trim());
   await writeAudit({
     session,
     action: "customer.create",

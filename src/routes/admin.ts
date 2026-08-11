@@ -7,6 +7,7 @@ import {
   createCustomerFor,
   deleteAdminFor,
   deleteCustomerFor,
+  getCustomerFor,
   listAdminsFor,
   listCustomersFor,
   updateAdminFor,
@@ -25,10 +26,24 @@ const customerCreateSchema = z
 
 const customerPatchSchema = z
   .object({
-    status: z.enum(["active", "blocked"]),
+    status: z.enum(["active", "blocked"]).optional(),
     notes: z.string().optional(),
+    name: z.string().min(1).optional(),
+    email: z.string().email().optional(),
+    phone: z.string().optional(),
+    city: z.string().optional(),
   })
-  .strict();
+  .strict()
+  .refine(
+    (body) =>
+      body.status != null ||
+      body.notes != null ||
+      body.name != null ||
+      body.email != null ||
+      body.phone != null ||
+      body.city != null,
+    { message: "Provide at least one field to update." },
+  );
 
 const adminCreateSchema = z
   .object({
@@ -50,6 +65,9 @@ const adminPatchSchema = z
 
 const adminRoutes: FastifyPluginAsync = async (app) => {
   app.get("/customers", async (request) => listCustomersFor(requireAuth(request)));
+  app.get<{ Params: { id: string } }>("/customers/:id", async (request) =>
+    getCustomerFor(requireAuth(request), request.params.id),
+  );
   app.post("/customers", async (request) => {
     const body = customerCreateSchema.parse(request.body);
     return createCustomerFor(requireAuth(request), body, request.ip);

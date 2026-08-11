@@ -73,7 +73,14 @@ function resolveCostCents(data: { costPrice?: number; price?: number }): number 
 
 async function resolveCategoryId(raw: string): Promise<number | undefined> {
   const alias = raw.trim();
-  if (!alias) return undefined;
+  const cats = await listWcCategories();
+  const fallback =
+    cats.find((c) => c.name.toLowerCase() === "uncategorized") ||
+    cats.find((c) => c.name.toLowerCase() === "ice bags") ||
+    cats[0];
+
+  if (!alias) return fallback?.id;
+
   const normalized = alias.toLowerCase();
   const mapped = await query<(RowDataPacket & { wc_term_id: number | null; approved: number })[]>(
     `SELECT wc_term_id, approved FROM iuw_category_map WHERE alias_normalized = :n LIMIT 1`,
@@ -81,7 +88,6 @@ async function resolveCategoryId(raw: string): Promise<number | undefined> {
   );
   if (mapped[0]?.approved && mapped[0].wc_term_id) return mapped[0].wc_term_id;
 
-  const cats = await listWcCategories();
   const exact = cats.find((c) => c.name.toLowerCase() === normalized);
   if (exact) {
     await execute(
@@ -93,7 +99,10 @@ async function resolveCategoryId(raw: string): Promise<number | undefined> {
     return exact.id;
   }
 
-  const pending = cats.find((c) => c.name.toLowerCase() === "pending category") || cats.find((c) => c.name === "Uncategorized");
+  const pending =
+    cats.find((c) => c.name.toLowerCase() === "pending category") ||
+    cats.find((c) => c.name === "Uncategorized") ||
+    fallback;
   await execute(
     `INSERT INTO iuw_category_map (alias, alias_normalized, wc_term_id, approved)
      VALUES (:alias, :normalized, :termId, 0)
@@ -171,13 +180,16 @@ export async function createProductFor(
   const costCents = resolveCostCents(data);
   const markupPercent = await markupForSupplier(scope);
   const sellCents = sellingCentsFromCost(costCents, markupPercent);
+  const stockQty = Math.max(0, Number(data.stock) || 0);
 
   const wc = await createWcProduct({
     name: data.name.trim(),
     regular_price: (sellCents / 100).toFixed(2),
     description: data.description || "",
     short_description: data.description || "",
-    stock_quantity: Number(data.stock) || 0,
+    stock_quantity: stockQty,
+    stock_status: stockQty > 0 ? "instock" : "outofstock",
+    catalog_visibility: "visible",
     status: data.active === false ? "draft" : "publish",
     categories: categoryId ? [{ id: categoryId }] : undefined,
     meta_data: [
@@ -223,7 +235,10 @@ export async function updateProductFor(
     patch.description = changes.description;
     patch.short_description = changes.description;
   }
-  if (typeof changes.stock === "number") patch.stock_quantity = changes.stock;
+  if (typeof changes.stock === "number") {
+    patch.stock_quantity = changes.stock;
+    patch.stock_status = changes.stock > 0 ? "instock" : "outofstock";
+  }
   if (typeof changes.active === "boolean") patch.status = changes.active ? "publish" : "draft";
   if (typeof changes.category === "string") {
     const categoryId = await resolveCategoryId(changes.category);

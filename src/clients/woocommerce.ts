@@ -18,7 +18,9 @@ export type WcProductInput = {
   short_description?: string;
   manage_stock?: boolean;
   stock_quantity?: number;
+  stock_status?: "instock" | "outofstock" | "onbackorder";
   status?: "publish" | "draft" | "private";
+  catalog_visibility?: "visible" | "catalog" | "search" | "hidden";
   categories?: { id: number }[];
   images?: { id?: number; src?: string }[];
   meta_data?: { key: string; value: string | number }[];
