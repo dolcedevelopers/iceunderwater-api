@@ -11,11 +11,12 @@ export async function writeAudit(input: {
   before?: unknown;
   after?: unknown;
 }): Promise<void> {
+  // MariaDB rejects CAST(... AS JSON). JSON columns accept a valid JSON string or NULL.
   await execute(
     `INSERT INTO iuw_audit_log
       (actor_wp_user_id, actor_role, action, target_type, target_id, ip, before_json, after_json)
      VALUES
-      (:actorId, :actorRole, :action, :targetType, :targetId, :ip, CAST(:beforeJson AS JSON), CAST(:afterJson AS JSON))`,
+      (:actorId, :actorRole, :action, :targetType, :targetId, :ip, :beforeJson, :afterJson)`,
     {
       actorId: input.session?.wpUserId ?? null,
       actorRole: roleOf(input.session),
