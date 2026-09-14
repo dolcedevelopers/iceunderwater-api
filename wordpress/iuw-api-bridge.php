@@ -69,6 +69,16 @@ function iuw_bridge_register_routes() {
 			'permission_callback' => 'iuw_bridge_authorize',
 		)
 	);
+
+	register_rest_route(
+		'iuw-bridge/v1',
+		'/upload-media',
+		array(
+			'methods'             => 'POST',
+			'callback'            => 'iuw_bridge_upload_media',
+			'permission_callback' => 'iuw_bridge_authorize',
+		)
+	);
 }
 
 function iuw_bridge_authorize( WP_REST_Request $request ) {
@@ -166,6 +176,54 @@ function iuw_bridge_send_invoice( WP_REST_Request $request ) {
 		'ok'      => true,
 		'orderId' => $order_id,
 		'to'      => $order->get_billing_email(),
+	);
+}
+
+function iuw_bridge_upload_media( WP_REST_Request $request ) {
+	$filename = sanitize_file_name( (string) $request->get_param( 'filename' ) );
+	$mime     = sanitize_text_field( (string) $request->get_param( 'mime' ) );
+	$data     = (string) $request->get_param( 'data' );
+
+	if ( ! $filename ) {
+		$filename = 'upload.jpg';
+	}
+	if ( ! preg_match( '/\.(jpe?g|png|webp)$/i', $filename ) ) {
+		$filename .= '.jpg';
+	}
+	if ( ! $data ) {
+		return new WP_Error( 'iuw_bridge_invalid', 'Image data is required.', array( 'status' => 400 ) );
+	}
+
+	$binary = base64_decode( $data, true );
+	if ( false === $binary || ! $binary ) {
+		return new WP_Error( 'iuw_bridge_invalid', 'Invalid image data.', array( 'status' => 400 ) );
+	}
+
+	$upload = wp_upload_bits( $filename, null, $binary );
+	if ( ! empty( $upload['error'] ) ) {
+		return new WP_Error( 'iuw_bridge_upload', (string) $upload['error'], array( 'status' => 500 ) );
+	}
+
+	$filetype   = wp_check_filetype( $filename, null );
+	$attachment = array(
+		'post_mime_type' => $mime ? $mime : ( $filetype['type'] ? $filetype['type'] : 'image/jpeg' ),
+		'post_title'     => preg_replace( '/\.[^.]+$/', '', $filename ),
+		'post_content'   => '',
+		'post_status'    => 'inherit',
+		'guid'           => $upload['url'],
+	);
+
+	$attach_id = wp_insert_attachment( $attachment, $upload['file'] );
+	if ( is_wp_error( $attach_id ) ) {
+		return $attach_id;
+	}
+
+	require_once ABSPATH . 'wp-admin/includes/image.php';
+	wp_update_attachment_metadata( $attach_id, wp_generate_attachment_metadata( $attach_id, $upload['file'] ) );
+
+	return array(
+		'id'        => (int) $attach_id,
+		'sourceUrl' => esc_url_raw( $upload['url'] ),
 	);
 }
 

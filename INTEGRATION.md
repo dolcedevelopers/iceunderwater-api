@@ -1,6 +1,6 @@
 # App ↔ API integration
 
-Contract source: `Desktop/Project/iceunderwater/mobile-app`.
+Contract source: `Desktop/iceunderwater-mobile` (separate repo from this API).
 
 ## Function → endpoint map (`backend.js`)
 

@@ -12,7 +12,8 @@ import {
   updateSupplierFor,
   uploadSupplierLogo,
 } from "../services/supplierService.js";
-import { notFound, validationError } from "../lib/errors.js";
+import { notFound } from "../lib/errors.js";
+import { readImageFromRequest } from "../lib/uploadRequest.js";
 
 const createSchema = z
   .object({
@@ -69,10 +70,8 @@ const supplierRoutes: FastifyPluginAsync = async (app) => {
 
   app.post<{ Params: { id: string } }>("/suppliers/:id/logo", async (request) => {
     const principal = requireAuth(request);
-    const file = await request.file();
-    if (!file) throw validationError("Image file is required.");
-    const buffer = await file.toBuffer();
-    return uploadSupplierLogo(principal, request.params.id, buffer, file.filename, request.ip);
+    const { buffer, filename } = await readImageFromRequest(request);
+    return uploadSupplierLogo(principal, request.params.id, buffer, filename, request.ip);
   });
 
   app.get<{ Params: { id: string } }>("/suppliers/:id/overview", async (request) =>

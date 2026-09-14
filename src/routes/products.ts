@@ -8,7 +8,7 @@ import {
   updateProductFor,
   uploadProductImage,
 } from "../services/productService.js";
-import { validationError } from "../lib/errors.js";
+import { readImageFromRequest } from "../lib/uploadRequest.js";
 
 const createSchema = z
   .object({
@@ -65,10 +65,8 @@ const productRoutes: FastifyPluginAsync = async (app) => {
 
   app.post<{ Params: { id: string } }>("/products/:id/image", async (request) => {
     const principal = requireAuth(request);
-    const file = await request.file();
-    if (!file) throw validationError("Image file is required.");
-    const buffer = await file.toBuffer();
-    return uploadProductImage(principal, request.params.id, buffer, file.filename, request.ip);
+    const { buffer, filename } = await readImageFromRequest(request);
+    return uploadProductImage(principal, request.params.id, buffer, filename, request.ip);
   });
 };
 

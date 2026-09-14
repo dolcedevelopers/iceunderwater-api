@@ -29,7 +29,7 @@ export async function buildApp() {
       redact: ["req.headers.authorization", "body.password", "body.refreshToken", "body.token"],
     },
     requestIdHeader: "x-request-id",
-    bodyLimit: 1_048_576,
+    bodyLimit: 8_388_608,
   });
 
   app.removeContentTypeParser("application/json");

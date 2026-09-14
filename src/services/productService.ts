@@ -4,6 +4,7 @@ import {
   type SessionLike,
 } from "../authz/permissions.js";
 import { accessDenied, validationError } from "../lib/errors.js";
+import { publicHttpsUrl } from "../lib/mediaUrl.js";
 import { centsToRands, randsToCents, sellingCentsFromCost } from "../lib/money.js";
 import type { ProductDto } from "../serializers/dto.js";
 import { writeAudit } from "../repositories/auditRepo.js";
@@ -47,7 +48,7 @@ function mapProduct(row: {
     stock: Number(row.stock) || 0,
     unit: row.unit || "",
     description: stripHtml(row.description || ""),
-    image: row.image || "",
+    image: publicHttpsUrl(row.image),
     active: Boolean(row.active),
   };
 }
@@ -297,6 +298,22 @@ export async function uploadProductImage(
   const owner = await findProductOwner(Number(productId));
   assertOwnsRecord(session, owner ? { supplierId: owner.supplier_id } : null, "product");
   const { url, mediaId } = await uploadImageBuffer(buffer, filename);
-  await updateWcProduct(Number(productId), { images: [{ id: mediaId }] });
-  return updateProductFor(session, productId, {}, ip).then((p) => p || { id: productId, image: url });
+  await updateWcProduct(Number(productId), {
+    images: [{ id: mediaId }],
+    meta_data: [
+      { key: "_iuw_supplier_id", value: owner!.supplier_id },
+      { key: "_iuw_image_url", value: url },
+    ],
+  });
+  const row = (await listProductsFromWp({ productId: Number(productId) }))[0];
+  const dto = row ? { ...mapProduct(row), image: publicHttpsUrl(row.image) || url } : { id: productId, image: url };
+  await writeAudit({
+    session,
+    action: "product.image",
+    targetType: "product",
+    targetId: productId,
+    ip,
+    after: dto,
+  });
+  return dto;
 }

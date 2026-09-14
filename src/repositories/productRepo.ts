@@ -95,7 +95,19 @@ export async function listProductsFromWp(filter: {
       CAST(COALESCE(s.markup_percent, 0) AS DECIMAL(8,2)) AS markup_percent,
       CAST(COALESCE(stock.meta_value, '0') AS SIGNED) AS stock,
       COALESCE(p.post_excerpt, p.post_content, '') AS description,
-      COALESCE(img.guid, '') AS image,
+      COALESCE(
+        NULLIF(imgurl.meta_value, ''),
+        CASE
+          WHEN file.meta_value IS NOT NULL AND file.meta_value <> '' THEN
+            CONCAT(
+              TRIM(TRAILING '/' FROM REPLACE(COALESCE(site.option_value, ''), 'http://', 'https://')),
+              '/wp-content/uploads/',
+              file.meta_value
+            )
+          ELSE REPLACE(COALESCE(img.guid, ''), 'http://', 'https://')
+        END,
+        ''
+      ) AS image,
       CASE WHEN p.post_status = 'publish' THEN 1 ELSE 0 END AS active,
       COALESCE(unit.meta_value, '') AS unit
      FROM iuw_product_owners po
@@ -105,8 +117,11 @@ export async function listProductsFromWp(filter: {
      LEFT JOIN wp_postmeta cost ON cost.post_id = p.ID AND cost.meta_key = '_iuw_cost_cents'
      LEFT JOIN wp_postmeta stock ON stock.post_id = p.ID AND stock.meta_key = '_stock'
      LEFT JOIN wp_postmeta unit ON unit.post_id = p.ID AND unit.meta_key = '_iuw_unit'
+     LEFT JOIN wp_postmeta imgurl ON imgurl.post_id = p.ID AND imgurl.meta_key = '_iuw_image_url'
      LEFT JOIN wp_postmeta thumb ON thumb.post_id = p.ID AND thumb.meta_key = '_thumbnail_id'
      LEFT JOIN wp_posts img ON img.ID = thumb.meta_value
+     LEFT JOIN wp_postmeta file ON file.post_id = img.ID AND file.meta_key = '_wp_attached_file'
+     LEFT JOIN wp_options site ON site.option_name = 'siteurl'
      LEFT JOIN (
        SELECT tr.object_id, t.name
        FROM wp_term_relationships tr

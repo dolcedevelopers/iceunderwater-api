@@ -8,6 +8,7 @@ import {
   ROLES,
 } from "../authz/permissions.js";
 import { accessDenied, notFound, validationError } from "../lib/errors.js";
+import { isHostedImageUrl, publicHttpsUrl } from "../lib/mediaUrl.js";
 import { makeId, normalizeEmail } from "../lib/ids.js";
 import { centsToRands } from "../lib/money.js";
 import { mapSupplier } from "../serializers/dto.js";
@@ -44,7 +45,7 @@ export async function getSupplierFor(session: SessionLike, supplierId: string) {
 export async function getSupplierBrand(supplierId: string) {
   const row = await findSupplierById(supplierId);
   if (!row || row.status !== "active") return null;
-  return { id: row.id, name: row.name, logo: row.logo_url || "" };
+  return { id: row.id, name: row.name, logo: publicHttpsUrl(row.logo_url) };
 }
 
 export async function createSupplierFor(
@@ -132,7 +133,14 @@ export async function updateSupplierFor(
     email: typeof safe.email === "string" ? normalizeEmail(safe.email) : undefined,
     phone: typeof safe.phone === "string" ? safe.phone : undefined,
     city: typeof safe.city === "string" ? safe.city : undefined,
-    logo_url: typeof safe.logo === "string" ? safe.logo : undefined,
+    logo_url:
+      typeof safe.logo === "string"
+        ? safe.logo === ""
+          ? ""
+          : isHostedImageUrl(safe.logo)
+            ? publicHttpsUrl(safe.logo)
+            : undefined
+        : undefined,
     status:
       isAdmin(session) && (safe.status === "active" || safe.status === "pending" || safe.status === "suspended")
         ? safe.status

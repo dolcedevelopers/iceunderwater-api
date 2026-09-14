@@ -122,6 +122,28 @@ export async function sendWcInvoice(orderId: number): Promise<void> {
 }
 
 export async function uploadWpMedia(buffer: Buffer, filename: string, mime: string): Promise<{ id: number; sourceUrl: string }> {
+  // WooCommerce consumer keys do not authenticate /wp/v2/media. Prefer the mu-plugin bridge.
+  try {
+    const payload = await httpJson<{ id: number; sourceUrl?: string; source_url?: string }>(
+      `${config.WP_BASE_URL}/wp-json/iuw-bridge/v1/upload-media`,
+      {
+        method: "POST",
+        headers: { "X-IUW-Bridge-Secret": config.WP_BRIDGE_SECRET },
+        body: {
+          filename,
+          mime,
+          data: buffer.toString("base64"),
+        },
+        retries: 1,
+        timeoutMs: 30_000,
+      },
+    );
+    const sourceUrl = payload.sourceUrl || payload.source_url;
+    if (payload.id && sourceUrl) return { id: payload.id, sourceUrl };
+  } catch {
+    // Fall through to WP REST in case Application Passwords were wired to the WC key user.
+  }
+
   const auth = Buffer.from(`${config.WC_CONSUMER_KEY}:${config.WC_CONSUMER_SECRET}`).toString("base64");
   const response = await fetch(`${config.WP_BASE_URL}/wp-json/wp/v2/media`, {
     method: "POST",
@@ -134,7 +156,12 @@ export async function uploadWpMedia(buffer: Buffer, filename: string, mime: stri
   });
   const payload = (await response.json().catch(() => ({}))) as { id?: number; source_url?: string; message?: string };
   if (!response.ok || !payload.id || !payload.source_url) {
-    throw new AppError(502, "UPSTREAM_ERROR", payload.message || "Media upload failed");
+    throw new AppError(
+      502,
+      "UPSTREAM_ERROR",
+      payload.message || "Image upload failed. Update the IUW API bridge mu-plugin so /upload-media is available.",
+      { expose: true },
+    );
   }
   return { id: payload.id, sourceUrl: payload.source_url };
 }

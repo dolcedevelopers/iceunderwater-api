@@ -1,3 +1,4 @@
+import { publicHttpsUrl } from "../lib/mediaUrl.js";
 import { centsToRands } from "../lib/money.js";
 
 export type SupplierDto = {
@@ -106,7 +107,7 @@ export function mapSupplier(row: {
     email: row.email,
     phone: row.phone,
     city: row.city,
-    logo: row.logo_url || "",
+    logo: publicHttpsUrl(row.logo_url),
     status: row.status,
     markupPercent: Number(row.markup_percent) || 0,
     createdAt: toIso(row.created_at),
