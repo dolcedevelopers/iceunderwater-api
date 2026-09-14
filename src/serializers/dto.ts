@@ -1,5 +1,6 @@
 import { publicHttpsUrl } from "../lib/mediaUrl.js";
 import { centsToRands } from "../lib/money.js";
+import { EVENT_GROUP_MAX_MEMBERS } from "../authz/permissions.js";
 
 export type SupplierDto = {
   id: string;
@@ -158,6 +159,36 @@ export function mapAdmin(row: {
   };
 }
 
+export type EventGroupMemberDto = {
+  wpUserId: number;
+  name: string;
+  email: string;
+  role: "owner" | "member";
+  status: "pending" | "active";
+};
+
+export type EventGroupDto = {
+  id: string;
+  eventKey: string;
+  name: string;
+  createdByWpUserId: number;
+  membersCanAccept: boolean;
+  memberCount: number;
+  maxMembers: number;
+  spotsLeft: number;
+  members: EventGroupMemberDto[];
+  pending: EventGroupMemberDto[];
+  you: {
+    inGroup: boolean;
+    isOwner: boolean;
+    canEdit: boolean;
+    canDelete: boolean;
+    canAccept: boolean;
+    membershipStatus: "pending" | "active" | null;
+  };
+  createdAt: string;
+};
+
 export function mapTransaction(row: {
   id: string;
   reference: string;
@@ -187,5 +218,51 @@ export function mapTransaction(row: {
     method: row.method,
     createdAt: toIso(row.created_at),
     receiptSentAt: row.receipt_sent_at ? toIso(row.receipt_sent_at) : "",
+  };
+}
+
+export function mapEventGroupMember(row: {
+  wp_user_id: number;
+  display_name: string;
+  email: string;
+  role: "owner" | "member";
+  status: "pending" | "active";
+}): EventGroupMemberDto {
+  return {
+    wpUserId: Number(row.wp_user_id),
+    name: row.display_name || row.email,
+    email: row.email,
+    role: row.role,
+    status: row.status,
+  };
+}
+
+export function mapEventGroup(
+  row: {
+    id: string;
+    event_key: string;
+    name: string;
+    created_by_wp_user_id: number;
+    members_can_accept: number | boolean;
+    created_at: Date | string;
+  },
+  members: EventGroupMemberDto[],
+  pending: EventGroupMemberDto[],
+  you: EventGroupDto["you"],
+): EventGroupDto {
+  const memberCount = members.length;
+  return {
+    id: row.id,
+    eventKey: row.event_key,
+    name: row.name,
+    createdByWpUserId: Number(row.created_by_wp_user_id),
+    membersCanAccept: Boolean(row.members_can_accept),
+    memberCount,
+    maxMembers: EVENT_GROUP_MAX_MEMBERS,
+    spotsLeft: Math.max(0, EVENT_GROUP_MAX_MEMBERS - memberCount),
+    members,
+    pending,
+    you,
+    createdAt: toIso(row.created_at),
   };
 }

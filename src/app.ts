@@ -16,6 +16,7 @@ import driverRoutes from "./routes/drivers.js";
 import adminRoutes from "./routes/admin.js";
 import transactionRoutes from "./routes/transactions.js";
 import webhookRoutes from "./routes/webhooks.js";
+import eventGroupRoutes from "./routes/eventGroups.js";
 import { pingDb } from "./db/pool.js";
 import { pingWooCommerce } from "./clients/woocommerce.js";
 import { pingWordpress } from "./clients/wordpress.js";
@@ -100,6 +101,7 @@ export async function buildApp() {
   await app.register(adminRoutes);
   await app.register(transactionRoutes);
   await app.register(webhookRoutes);
+  await app.register(eventGroupRoutes);
 
   return app;
 }

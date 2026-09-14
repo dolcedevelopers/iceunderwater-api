@@ -37,6 +37,15 @@ Contract source: `Desktop/iceunderwater-mobile` (separate repo from this API).
 | `recordAppOrder(...)` | — | **removed** | Woo webhook syncs orders |
 | `getAdminOverview(session)` | GET | `/admin/overview` | |
 | `getSupplierOverview(session, id)` | GET | `/suppliers/:id/overview` | |
+| `listEventGroups(session, eventKey)` | GET | `/event-groups?eventKey=` | Public list; pending visible to acceptor |
+| `createEventGroup(session, data)` | POST | `/event-groups` | Customer (owner) or admin |
+| `updateEventGroup(session, id, changes)` | PATCH | `/event-groups/:id` | Creator or admin |
+| `deleteEventGroup(session, id)` | DELETE | `/event-groups/:id` | Creator or admin |
+| `joinEventGroup(session, id)` | POST | `/event-groups/:id/join` | Customer request |
+| `leaveEventGroup(session, id)` | POST | `/event-groups/:id/leave` | Member / cancel request |
+| `acceptEventGroupJoin(session, id, wpUserId)` | POST | `/event-groups/:id/members/:wpUserId/accept` | Owner, delegated member, or admin |
+| `rejectEventGroupJoin(session, id, wpUserId)` | POST | `/event-groups/:id/members/:wpUserId/reject` | Same as accept |
+| `removeEventGroupMember(session, id, wpUserId)` | DELETE | `/event-groups/:id/members/:wpUserId` | Creator or admin |
 | `resetDemoData()` | — | **removed** | Local mock only |
 
 ### Auth (`auth.js`)

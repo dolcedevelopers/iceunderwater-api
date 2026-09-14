@@ -122,3 +122,51 @@ export function requireTransactionAccess(session: SessionLike, transaction: Tran
     throw accessDenied("That receipt is not available.");
   }
 }
+
+/** Customers attend ICE UNDERWATER events; suppliers and drivers do not manage groups. */
+export const EVENT_GROUP_MAX_MEMBERS = 6;
+
+export type EventGroupAccess = {
+  createdByWpUserId: number;
+  membersCanAccept: boolean;
+} | null | undefined;
+
+export type EventGroupMembershipAccess = {
+  wpUserId: number;
+  role: "owner" | "member";
+  status: "pending" | "active";
+} | null | undefined;
+
+export function canUseEventGroups(session: SessionLike): boolean {
+  return isCustomer(session) || isAdmin(session);
+}
+
+export function requireEventGroupUser(session: SessionLike): Principal {
+  const principal = requireSignedIn(session);
+  if (!canUseEventGroups(principal)) {
+    throw accessDenied("Event groups are for ICE UNDERWATER customers.");
+  }
+  return principal;
+}
+
+export function canDeleteEventGroup(session: SessionLike, group: EventGroupAccess): boolean {
+  if (!group) return false;
+  if (isAdmin(session)) return true;
+  return isCustomer(session) && group.createdByWpUserId === session?.wpUserId;
+}
+
+export function canEditEventGroup(session: SessionLike, group: EventGroupAccess): boolean {
+  return canDeleteEventGroup(session, group);
+}
+
+export function canAcceptEventGroupJoin(
+  session: SessionLike,
+  group: EventGroupAccess,
+  membership: EventGroupMembershipAccess,
+): boolean {
+  if (!group) return false;
+  if (isAdmin(session)) return true;
+  if (!isCustomer(session) || !membership || membership.status !== "active") return false;
+  if (membership.role === "owner") return true;
+  return Boolean(group.membersCanAccept);
+}

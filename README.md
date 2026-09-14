@@ -36,6 +36,8 @@ define('IUW_BRIDGE_ALLOWED_IPS', 'YOUR.API.SERVER.IP');
 
 That file registers roles `iuw_supplier` / `iuw_admin`, verifies credentials, creates users, uploads media, creates/updates/deletes products as a WordPress administrator, and triggers WooCommerce’s own customer-invoice email. Replace the file on the live site whenever this repo’s copy changes — WooCommerce API keys often cannot publish products or upload to `/wp/v2/media`.
 
+Customer event groups (max 6, keyed to a WordPress page slug) live in `iuw_event_groups` / `iuw_event_group_members`. Run migrations after deploy.
+
 ## Migrations
 
 ```bash

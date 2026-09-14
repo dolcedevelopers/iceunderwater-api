@@ -5,8 +5,12 @@ import assert from "node:assert/strict";
 import { describe, it } from "vitest";
 import {
   assertOwnsRecord,
+  canAcceptEventGroupJoin,
   canAccessTransaction,
+  canDeleteEventGroup,
+  canUseEventGroups,
   requireAdmin,
+  requireEventGroupUser,
   resolveSupplierScope,
   ROLES,
   type Principal,
@@ -171,6 +175,38 @@ describe("access rules (ported from mobile app)", () => {
     if (supplierOne.role !== ROLES.ADMIN) delete (safe as { status?: string }).status;
     assert.equal("status" in safe, false);
     assert.equal(safe.name, "New");
+  });
+});
+
+describe("event groups", () => {
+  const group = { createdByWpUserId: 2, membersCanAccept: false };
+  const ownerMembership = { wpUserId: 2, role: "owner" as const, status: "active" as const };
+  const memberMembership = { wpUserId: 3, role: "member" as const, status: "active" as const };
+
+  it("only customers and admins use event groups", () => {
+    assert.equal(canUseEventGroups(guest), false);
+    assert.equal(canUseEventGroups(supplierOne), false);
+    assert.equal(canUseEventGroups(customerZanele), true);
+    assert.equal(canUseEventGroups(admin), true);
+    refused(() => requireEventGroupUser(supplierOne));
+    assert.ok(requireEventGroupUser(customerZanele));
+  });
+
+  it("creator or admin may delete; other customers may not", () => {
+    assert.equal(canDeleteEventGroup(customerZanele, group), true);
+    assert.equal(canDeleteEventGroup(customerClub, group), false);
+    assert.equal(canDeleteEventGroup(admin, group), true);
+    assert.equal(canDeleteEventGroup(supplierOne, group), false);
+  });
+
+  it("join accepts stay with the owner unless delegated", () => {
+    assert.equal(canAcceptEventGroupJoin(customerZanele, group, ownerMembership), true);
+    assert.equal(canAcceptEventGroupJoin(customerClub, group, memberMembership), false);
+    assert.equal(
+      canAcceptEventGroupJoin(customerClub, { ...group, membersCanAccept: true }, memberMembership),
+      true,
+    );
+    assert.equal(canAcceptEventGroupJoin(admin, group, null), true);
   });
 });
 
