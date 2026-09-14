@@ -146,6 +146,7 @@ No trailing slash. App wiring is a separate step after you paste that link.
 | `db: false` on `/health` | Firewall / SSL (`DATABASE_SSL=true`) / wrong database name |
 | `wordpress: false` | mu-plugin missing, or `WP_BRIDGE_SECRET` mismatch |
 | Bridge always 403 | Secret mismatch, or `IUW_BRIDGE_ALLOWED_IPS` set to a non-Render IP |
+| “not allowed to create posts as this user” | Live `iuw-api-bridge.php` is stale; copy the repo file to `mu-plugins` and redeploy the API |
 | Webhook 401 | `WC_WEBHOOK_SECRET` ≠ WooCommerce webhook secret |
 | Free tier “sleeps” | Upgrade to Starter, or accept cold starts |
 

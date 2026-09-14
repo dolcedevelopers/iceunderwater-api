@@ -10,6 +10,54 @@ function wcUrl(path: string): string {
   return `${config.WP_BASE_URL}/wp-json/wc/v3${path}`;
 }
 
+function bridgeHeaders(): Record<string, string> {
+  return { "X-IUW-Bridge-Secret": config.WP_BRIDGE_SECRET };
+}
+
+function rewriteProductCapError(error: unknown): never {
+  if (
+    error instanceof AppError &&
+    /not allowed to (create|edit) (posts|this post) as this user/i.test(error.message)
+  ) {
+    throw new AppError(
+      502,
+      "UPSTREAM_ERROR",
+      "WordPress blocked the product save. Copy the latest wordpress/iuw-api-bridge.php to mu-plugins on the site.",
+      { expose: true, cause: error },
+    );
+  }
+  throw error;
+}
+
+async function wcMutate<T>(
+  bridge: { path: string; method: string },
+  rest: { path: string; method: string },
+  body?: unknown,
+): Promise<T> {
+  try {
+    return await httpJson<T>(`${config.WP_BASE_URL}/wp-json/iuw-bridge/v1${bridge.path}`, {
+      method: bridge.method,
+      headers: bridgeHeaders(),
+      body,
+      retries: 0,
+    });
+  } catch (error) {
+    if (error instanceof AppError && (error.status === 404 || error.code === "NOT_FOUND")) {
+      try {
+        return await httpJson<T>(wcUrl(rest.path), {
+          method: rest.method,
+          headers: { Authorization: wcAuthHeader() },
+          body,
+          retries: 0,
+        });
+      } catch (restError) {
+        rewriteProductCapError(restError);
+      }
+    }
+    throw error;
+  }
+}
+
 export type WcProductInput = {
   name: string;
   type?: string;
@@ -41,26 +89,27 @@ export type WcProduct = {
 };
 
 export async function createWcProduct(input: WcProductInput): Promise<WcProduct> {
-  return httpJson<WcProduct>(wcUrl("/products"), {
-    method: "POST",
-    headers: { Authorization: wcAuthHeader() },
-    body: { type: "simple", manage_stock: true, status: "publish", ...input },
-  });
+  const body = { type: "simple", manage_stock: true, status: "publish", ...input };
+  return wcMutate<WcProduct>(
+    { path: "/products", method: "POST" },
+    { path: "/products", method: "POST" },
+    body,
+  );
 }
 
 export async function updateWcProduct(id: number, input: Partial<WcProductInput>): Promise<WcProduct> {
-  return httpJson<WcProduct>(wcUrl(`/products/${id}`), {
-    method: "PUT",
-    headers: { Authorization: wcAuthHeader() },
-    body: input,
-  });
+  return wcMutate<WcProduct>(
+    { path: `/products/${id}`, method: "POST" },
+    { path: `/products/${id}`, method: "PUT" },
+    input,
+  );
 }
 
 export async function deleteWcProduct(id: number): Promise<void> {
-  await httpJson(wcUrl(`/products/${id}?force=false`), {
-    method: "DELETE",
-    headers: { Authorization: wcAuthHeader() },
-  });
+  await wcMutate(
+    { path: `/products/${id}/delete`, method: "POST" },
+    { path: `/products/${id}?force=false`, method: "DELETE" },
+  );
 }
 
 export async function getWcProduct(id: number): Promise<WcProduct> {

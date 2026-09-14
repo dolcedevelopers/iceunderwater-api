@@ -34,7 +34,7 @@ define('IUW_BRIDGE_SECRET', 'same-as-WP_BRIDGE_SECRET');
 define('IUW_BRIDGE_ALLOWED_IPS', 'YOUR.API.SERVER.IP');
 ```
 
-That file registers roles `iuw_supplier` / `iuw_admin`, verifies credentials, creates users, uploads media for product/logo images (`/upload-media`), and triggers WooCommerce’s own customer-invoice email. Replace the file on the live site whenever this repo’s copy changes — WooCommerce API keys cannot upload to `/wp/v2/media`.
+That file registers roles `iuw_supplier` / `iuw_admin`, verifies credentials, creates users, uploads media, creates/updates/deletes products as a WordPress administrator, and triggers WooCommerce’s own customer-invoice email. Replace the file on the live site whenever this repo’s copy changes — WooCommerce API keys often cannot publish products or upload to `/wp/v2/media`.
 
 ## Migrations
 
