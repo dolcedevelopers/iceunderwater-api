@@ -4,7 +4,7 @@ import {
   type SessionLike,
 } from "../authz/permissions.js";
 import { accessDenied, validationError } from "../lib/errors.js";
-import { publicHttpsUrl } from "../lib/mediaUrl.js";
+import { toCatalogImageUrl } from "../lib/mediaUrl.js";
 import { centsToRands, randsToCents, sellingCentsFromCost } from "../lib/money.js";
 import type { ProductDto } from "../serializers/dto.js";
 import { writeAudit } from "../repositories/auditRepo.js";
@@ -48,7 +48,7 @@ function mapProduct(row: {
     stock: Number(row.stock) || 0,
     unit: row.unit || "",
     description: stripHtml(row.description || ""),
-    image: publicHttpsUrl(row.image),
+    image: toCatalogImageUrl(row.image),
     active: Boolean(row.active),
   };
 }
@@ -306,7 +306,7 @@ export async function uploadProductImage(
     ],
   });
   const row = (await listProductsFromWp({ productId: Number(productId) }))[0];
-  const dto = row ? { ...mapProduct(row), image: publicHttpsUrl(row.image) || url } : { id: productId, image: url };
+  const dto = row ? { ...mapProduct(row), image: toCatalogImageUrl(row.image) || url } : { id: productId, image: url };
   await writeAudit({
     session,
     action: "product.image",
