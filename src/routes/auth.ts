@@ -13,6 +13,8 @@ const loginSchema = z
     email: z.string().email(),
     password: z.string().min(1),
     siteToken: z.string().optional(),
+    /** mobile = Expo app; web = browser. Mobile login kicks other mobile sessions. */
+    client: z.enum(["mobile", "web"]).optional(),
   })
   .strict();
 
@@ -25,6 +27,7 @@ const registerSchema = z
     businessName: z.string().optional(),
     phone: z.string().optional(),
     city: z.string().optional(),
+    client: z.enum(["mobile", "web"]).optional(),
   })
   .strict();
 

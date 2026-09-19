@@ -16,7 +16,7 @@ import { findSupplierByWpUserId, insertSupplier } from "../repositories/supplier
 import { findDriverByEmail } from "../repositories/driverRepo.js";
 import { verifyPassword } from "../auth/password.js";
 import { makeId } from "../lib/ids.js";
-import { issueRefreshToken, signAccessToken } from "../auth/tokens.js";
+import { issueRefreshToken, signAccessToken, type ClientKind } from "../auth/tokens.js";
 
 function hasRole(roles: string[], needle: string): boolean {
   return roles.map((r) => r.toLowerCase()).includes(needle.toLowerCase());
@@ -66,9 +66,11 @@ export async function login(input: {
   email: string;
   password: string;
   siteToken?: string;
+  client?: ClientKind;
 }): Promise<{ accessToken: string; refreshToken: string; principal: Principal }> {
   const email = normalizeEmail(input.email);
   if (!email || !input.password) throw validationError("Enter your email address and password.");
+  const clientKind: ClientKind = input.client === "mobile" || input.client === "web" ? input.client : "unknown";
 
   if (input.accountType === "driver") {
     const driver = await findDriverByEmail(email);
@@ -86,7 +88,7 @@ export async function login(input: {
     };
     return {
       accessToken: await signAccessToken(principal),
-      refreshToken: await issueRefreshToken(principal),
+      refreshToken: await issueRefreshToken(principal, { clientKind }),
       principal,
     };
   }
@@ -113,7 +115,7 @@ export async function login(input: {
 
   return {
     accessToken: await signAccessToken(principal),
-    refreshToken: await issueRefreshToken(principal),
+    refreshToken: await issueRefreshToken(principal, { clientKind }),
     principal,
   };
 }
@@ -126,17 +128,19 @@ export async function register(input: {
   businessName?: string;
   phone?: string;
   city?: string;
+  client?: ClientKind;
 }): Promise<{ accessToken?: string; refreshToken?: string; principal?: Principal; supplier?: { id: string; status: string } }> {
   const email = normalizeEmail(input.email);
   if (!email || !input.password) throw validationError("Enter your email address and a password.");
   if (input.password.length < 8) throw validationError("Use a password of at least 8 characters.");
+  const clientKind: ClientKind = input.client === "mobile" || input.client === "web" ? input.client : "unknown";
 
   if (input.accountType === "customer") {
     const wpUser = await registerWpCustomer(email, input.password, input.name || "");
     const principal = await principalFromWpUser(wpUser);
     return {
       accessToken: await signAccessToken(principal),
-      refreshToken: await issueRefreshToken(principal),
+      refreshToken: await issueRefreshToken(principal, { clientKind }),
       principal,
     };
   }
@@ -164,7 +168,7 @@ export async function register(input: {
   const principal = await principalFromWpUser({ ...wpUser, roles: ["iuw_supplier"] });
   return {
     accessToken: await signAccessToken(principal),
-    refreshToken: await issueRefreshToken(principal),
+    refreshToken: await issueRefreshToken(principal, { clientKind }),
     principal,
     supplier: { id: supplier.id, status: supplier.status },
   };
