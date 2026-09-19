@@ -4,6 +4,15 @@ import { AppError } from "../lib/errors.js";
 import fp from "./fp.js";
 
 const errorPlugin: FastifyPluginAsync = async (app) => {
+  app.setNotFoundHandler((request, reply) => {
+    return reply.status(404).send({
+      status: 404,
+      code: "NOT_FOUND",
+      message: "Oops, something went wrong.",
+      requestId: request.id,
+    });
+  });
+
   app.setErrorHandler((error: FastifyError | AppError | ZodError | Error, request, reply) => {
     const requestId = request.id;
 
@@ -20,7 +29,7 @@ const errorPlugin: FastifyPluginAsync = async (app) => {
       return reply.status(error.status).send({
         status: error.status,
         code: error.code,
-        message: error.expose ? error.message : "Something went wrong.",
+        message: error.expose ? error.message : "Oops, something went wrong.",
         requestId,
       });
     }
@@ -30,7 +39,7 @@ const errorPlugin: FastifyPluginAsync = async (app) => {
     return reply.status(status).send({
       status,
       code: status === 429 ? "RATE_LIMITED" : "INTERNAL_ERROR",
-      message: status === 429 ? "Too many requests. Please try again later." : "Something went wrong.",
+      message: status === 429 ? "Too many requests. Please try again later." : "Oops, something went wrong.",
       requestId,
     });
   });
