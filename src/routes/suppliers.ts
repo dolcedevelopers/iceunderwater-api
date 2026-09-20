@@ -6,6 +6,7 @@ import {
   deleteSupplierFor,
   getSupplierBrand,
   getSupplierFor,
+  listCompaniesDirectory,
   listSuppliersFor,
   supplierOverview,
   supplierSettlementReport,
@@ -14,6 +15,7 @@ import {
 } from "../services/supplierService.js";
 import { notFound } from "../lib/errors.js";
 import { readImageFromRequest } from "../lib/uploadRequest.js";
+import { tryAuth } from "../plugins/auth.js";
 
 const createSchema = z
   .object({
@@ -41,8 +43,27 @@ const patchSchema = z
   })
   .strict();
 
+const directoryQuery = z
+  .object({
+    city: z.string().optional(),
+    province: z.string().optional(),
+    scope: z.enum(["city", "province", "national"]).optional(),
+    viewerCity: z.string().optional(),
+  })
+  .strict();
+
 const supplierRoutes: FastifyPluginAsync = async (app) => {
-  app.get("/suppliers", async (request) => listSuppliersFor(requireAuth(request)));
+  app.get("/suppliers", async (request) => {
+    const q = request.query as { city?: string; province?: string; status?: string };
+    return listSuppliersFor(requireAuth(request), q);
+  });
+
+  /** Customer + admin company directory (grouped, never hard-excludes other areas). */
+  app.get("/companies", async (request) => {
+    const q = directoryQuery.parse(request.query || {});
+    const session = tryAuth(request);
+    return listCompaniesDirectory(session, q);
+  });
 
   app.post("/suppliers", async (request) => {
     const body = createSchema.parse(request.body);

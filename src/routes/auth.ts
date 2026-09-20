@@ -1,11 +1,13 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { requireAuth } from "../plugins/auth.js";
-import { login, mePayload, register } from "../services/identityService.js";
+import { login, mePayload, register, updateMyPhotos } from "../services/identityService.js";
 import { revokeRefreshToken, rotateRefreshToken } from "../auth/tokens.js";
 import { authRequired, accessDenied, AppError } from "../lib/errors.js";
 import { config } from "../config.js";
 import { createFirstOwner } from "../services/seedOwner.js";
+import { readImageFromRequest } from "../lib/uploadRequest.js";
+import { uploadImageBuffer } from "../services/mediaService.js";
 
 const loginSchema = z
   .object({
@@ -23,11 +25,21 @@ const registerSchema = z
     accountType: z.enum(["customer", "supplier"]),
     email: z.string().email(),
     password: z.string().min(8),
+    passwordConfirm: z.string().optional(),
     name: z.string().optional(),
     businessName: z.string().optional(),
     phone: z.string().optional(),
     city: z.string().optional(),
+    avatarUrl: z.string().optional(),
+    groupPhotoUrl: z.string().optional(),
     client: z.enum(["mobile", "web"]).optional(),
+  })
+  .strict();
+
+const photosSchema = z
+  .object({
+    avatarUrl: z.string().optional(),
+    groupPhotoUrl: z.string().optional(),
   })
   .strict();
 
@@ -72,6 +84,22 @@ const authRoutes: FastifyPluginAsync = async (app) => {
           }
         : null,
     };
+  });
+
+  app.post("/me/photos", async (request) => {
+    const body = photosSchema.parse(request.body);
+    return updateMyPhotos(requireAuth(request), body);
+  });
+
+  app.post("/me/photos/upload", async (request) => {
+    const principal = requireAuth(request);
+    const { buffer, filename } = await readImageFromRequest(request);
+    const { url } = await uploadImageBuffer(buffer, filename);
+    const kind = String((request.query as { kind?: string })?.kind || "avatar");
+    if (kind === "group") {
+      return updateMyPhotos(principal, { groupPhotoUrl: url });
+    }
+    return updateMyPhotos(principal, { avatarUrl: url });
   });
 
   app.post("/auth/refresh", async (request) => {

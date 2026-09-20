@@ -37,6 +37,12 @@ const transactionRoutes: FastifyPluginAsync = async (app) => {
   );
 
   app.get("/me/receipts", async (request) => listMyReceipts(requireAuth(request)));
+
+  /** Alias — same ACL as transactions/receipts, clearer for app invoices UI. */
+  app.get("/invoices", async (request) => listMyReceipts(requireAuth(request)));
+  app.get<{ Params: { id: string } }>("/invoices/:id", async (request) =>
+    getTransactionFor(requireAuth(request), request.params.id),
+  );
 };
 
 export default transactionRoutes;

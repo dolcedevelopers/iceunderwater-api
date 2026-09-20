@@ -24,6 +24,7 @@ import { listTransactions } from "../repositories/transactionRepo.js";
 import { createWpUserViaBridge } from "../clients/wordpress.js";
 import { execute, query } from "../db/pool.js";
 import type { RowDataPacket } from "mysql2";
+import { assertKnownCity } from "../data/saLocations.js";
 
 async function upsertUserMeta(userId: number, metaKey: string, metaValue: string) {
   const existing = await query<(RowDataPacket & { umeta_id: number })[]>(
@@ -340,7 +341,17 @@ export async function updateCustomerFor(
     await upsertUserMeta(id, "billing_phone", changes.phone.trim());
   }
   if (typeof changes.city === "string") {
-    await upsertUserMeta(id, "billing_city", changes.city.trim());
+    const trimmed = changes.city.trim();
+    if (trimmed) {
+      try {
+        const found = assertKnownCity(trimmed);
+        await upsertUserMeta(id, "billing_city", found?.city || trimmed);
+      } catch {
+        throw validationError("Choose a city from the list.");
+      }
+    } else {
+      await upsertUserMeta(id, "billing_city", "");
+    }
   }
 
   if (isAdmin(session) && (changes.status === "active" || changes.status === "blocked")) {

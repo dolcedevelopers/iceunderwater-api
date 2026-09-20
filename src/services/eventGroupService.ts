@@ -14,12 +14,15 @@ import {
   acceptJoinRequest,
   countActiveMembers,
   deleteMember,
+  deleteMemberById,
   findEventGroupById,
+  findMemberById,
   findMembership,
   findMembershipForEvent,
   insertEventGroup,
   insertMember,
   listEventGroups,
+  listGroupsForWpUser,
   listMembersForGroups,
   softDeleteEventGroup,
   updateEventGroup,
@@ -27,11 +30,14 @@ import {
   type EventGroupRow,
 } from "../repositories/eventGroupRepo.js";
 import { mapEventGroup, mapEventGroupMember, type EventGroupDto } from "../serializers/dto.js";
+import { isHostedImageUrl, publicHttpsUrl } from "../lib/mediaUrl.js";
 
 const EVENT_KEY_RE = /^[a-z0-9-]{3,80}$/;
+const DEFAULT_COMPETITION = "ICE UNDERWATER Warrior Kings";
+const DEFAULT_EVENT_KEY = "warrior-kings";
 
 export function normalizeEventKey(value?: string | null): string {
-  const key = String(value || "military-weekend-experience")
+  const key = String(value || DEFAULT_EVENT_KEY)
     .trim()
     .toLowerCase();
   if (!EVENT_KEY_RE.test(key)) throw validationError("That event is not valid.");
@@ -52,7 +58,7 @@ function toAccess(group: EventGroupRow) {
 function toMemberAccess(membership: EventGroupMemberRow | null) {
   if (!membership) return null;
   return {
-    wpUserId: Number(membership.wp_user_id),
+    wpUserId: membership.wp_user_id != null ? Number(membership.wp_user_id) : 0,
     role: membership.role,
     status: membership.status,
   };
@@ -61,12 +67,14 @@ function toMemberAccess(membership: EventGroupMemberRow | null) {
 function youShape(session: SessionLike, group: EventGroupRow, membership: EventGroupMemberRow | null) {
   const access = toAccess(group);
   const memberAccess = toMemberAccess(membership);
+  const canEdit = canEditEventGroup(session, access);
   return {
     inGroup: membership?.status === "active",
     isOwner: membership?.role === "owner" && membership.status === "active",
-    canEdit: canEditEventGroup(session, access),
+    canEdit,
     canDelete: canDeleteEventGroup(session, access),
     canAccept: canAcceptEventGroupJoin(session, access, memberAccess),
+    canAddMembers: canEdit,
     membershipStatus: membership?.status ?? null,
   };
 }
@@ -114,7 +122,14 @@ export async function getEventGroupFor(session: SessionLike, groupId: string): P
 
 export async function createEventGroupFor(
   session: SessionLike,
-  data: { eventKey?: string; name: string; membersCanAccept?: boolean },
+  data: {
+    eventKey?: string;
+    name: string;
+    membersCanAccept?: boolean;
+    stage?: string;
+    competitionName?: string;
+    groupPhotoUrl?: string;
+  },
   ip?: string,
 ): Promise<EventGroupDto> {
   const principal = requireEventGroupUser(session);
@@ -128,6 +143,9 @@ export async function createEventGroupFor(
     throw conflict("You already have a group or a join request for this event.");
   }
 
+  const photo = String(data.groupPhotoUrl || "").trim();
+  if (photo && !isHostedImageUrl(photo)) throw validationError("Group photo URL is not valid.");
+
   const id = makeId("grp");
   const group = await insertEventGroup({
     id,
@@ -135,17 +153,24 @@ export async function createEventGroupFor(
     name,
     created_by_wp_user_id: principal.wpUserId,
     members_can_accept: Boolean(data.membersCanAccept),
+    stage: data.stage || "group_stage",
+    competition_name: data.competitionName || DEFAULT_COMPETITION,
+    group_photo_url: photo ? publicHttpsUrl(photo) : "",
   });
 
   if (!isAdmin(principal)) {
+    const parts = String(displayNameOf(principal)).split(/\s+/);
     await insertMember({
       group_id: id,
       event_key: eventKey,
       wp_user_id: principal.wpUserId,
       display_name: displayNameOf(principal),
       email: normalizeEmail(principal.email),
+      first_name: parts[0] || "",
+      surname: parts.slice(1).join(" "),
       role: "owner",
       status: "active",
+      is_guest: false,
     });
   }
 
@@ -157,7 +182,13 @@ export async function createEventGroupFor(
 export async function updateEventGroupFor(
   session: SessionLike,
   groupId: string,
-  changes: { name?: string; membersCanAccept?: boolean },
+  changes: {
+    name?: string;
+    membersCanAccept?: boolean;
+    stage?: string;
+    competitionName?: string;
+    groupPhotoUrl?: string;
+  },
   ip?: string,
 ): Promise<EventGroupDto> {
   const principal = requireEventGroupUser(session);
@@ -167,13 +198,28 @@ export async function updateEventGroupFor(
     throw accessDenied("Only the group creator or an administrator can edit this group.");
   }
 
-  const patch: { name?: string; members_can_accept?: boolean } = {};
+  const patch: {
+    name?: string;
+    members_can_accept?: boolean;
+    stage?: string;
+    competition_name?: string;
+    group_photo_url?: string;
+  } = {};
   if (typeof changes.name === "string") {
     const name = changes.name.trim();
     if (name.length < 2) throw validationError("Give the group a name.");
     patch.name = name;
   }
   if (typeof changes.membersCanAccept === "boolean") patch.members_can_accept = changes.membersCanAccept;
+  if (typeof changes.stage === "string" && changes.stage.trim()) patch.stage = changes.stage.trim();
+  if (typeof changes.competitionName === "string" && changes.competitionName.trim()) {
+    patch.competition_name = changes.competitionName.trim();
+  }
+  if (typeof changes.groupPhotoUrl === "string") {
+    const photo = changes.groupPhotoUrl.trim();
+    if (photo && !isHostedImageUrl(photo)) throw validationError("Group photo URL is not valid.");
+    patch.group_photo_url = photo ? publicHttpsUrl(photo) : "";
+  }
 
   const updated = await updateEventGroup(groupId, patch);
   if (!updated) throw notFound("That group is not available.");
@@ -323,4 +369,114 @@ export async function removeEventGroupMemberFor(
     after: { wpUserId },
   });
   return dto;
+}
+
+/** Owner adds a competition teammate by name / cell / email (guest roster). */
+export async function addEventGroupMemberFor(
+  session: SessionLike,
+  groupId: string,
+  data: { firstName: string; surname: string; phone: string; email: string; photoUrl?: string },
+  ip?: string,
+): Promise<EventGroupDto> {
+  const principal = requireEventGroupUser(session);
+  const group = await findEventGroupById(groupId);
+  if (!group) throw notFound("That group is not available.");
+  if (!canEditEventGroup(principal, toAccess(group))) {
+    throw accessDenied("Only the group creator or an administrator can add members.");
+  }
+
+  const firstName = String(data.firstName || "").trim();
+  const surname = String(data.surname || "").trim();
+  const phone = String(data.phone || "").trim();
+  const email = normalizeEmail(data.email);
+  if (!firstName || !surname) throw validationError("Enter name and surname.");
+  if (!phone) throw validationError("Enter a cell number.");
+  if (!email) throw validationError("Enter an email address.");
+
+  const active = await countActiveMembers(group.id);
+  if (active >= EVENT_GROUP_MAX_MEMBERS) throw conflict("This group is full (6 people).");
+
+  const photo = String(data.photoUrl || "").trim();
+  if (photo && !isHostedImageUrl(photo)) throw validationError("Photo URL is not valid.");
+
+  await insertMember({
+    group_id: group.id,
+    event_key: group.event_key,
+    wp_user_id: null,
+    display_name: `${firstName} ${surname}`.trim(),
+    email,
+    first_name: firstName,
+    surname,
+    phone,
+    photo_url: photo ? publicHttpsUrl(photo) : "",
+    is_guest: true,
+    role: "member",
+    status: "active",
+  });
+
+  const dto = await loadGroupDto(principal, group);
+  await writeAudit({
+    session: principal,
+    action: "event-group.add-member",
+    targetType: "event-group",
+    targetId: groupId,
+    ip,
+    after: { email, firstName, surname },
+  });
+  return dto;
+}
+
+export async function removeEventGroupMemberByIdFor(
+  session: SessionLike,
+  groupId: string,
+  memberId: number,
+  ip?: string,
+): Promise<EventGroupDto> {
+  const principal = requireEventGroupUser(session);
+  const group = await findEventGroupById(groupId);
+  if (!group) throw notFound("That group is not available.");
+  if (!canEditEventGroup(principal, toAccess(group))) {
+    throw accessDenied("Only the group creator or an administrator can remove members.");
+  }
+  const target = await findMemberById(memberId);
+  if (!target || target.group_id !== groupId) throw notFound("That member is not in this group.");
+  if (target.role === "owner") throw conflict("The group creator cannot be removed. Delete the group instead.");
+  await deleteMemberById(groupId, memberId);
+  const dto = await loadGroupDto(principal, group);
+  await writeAudit({
+    session: principal,
+    action: "event-group.remove-member",
+    targetType: "event-group",
+    targetId: groupId,
+    ip,
+    after: { memberId },
+  });
+  return dto;
+}
+
+export async function competitionProfileFor(session: SessionLike) {
+  const principal = requireEventGroupUser(session);
+  const groups = await listGroupsForWpUser(principal.wpUserId);
+  const members = await listMembersForGroups(groups.map((g) => g.id));
+  const byGroup = new Map<string, EventGroupMemberRow[]>();
+  for (const member of members) {
+    const list = byGroup.get(member.group_id) || [];
+    list.push(member);
+    byGroup.set(member.group_id, list);
+  }
+  return {
+    competitionName: DEFAULT_COMPETITION,
+    groups: groups.map((group) => {
+      const dto = toDto(principal, group, byGroup.get(group.id) || []);
+      return {
+        id: dto.id,
+        name: dto.name,
+        stage: dto.stage,
+        competitionName: dto.competitionName,
+        memberCount: dto.memberCount,
+        maxMembers: dto.maxMembers,
+        you: dto.you,
+      };
+    }),
+  };
 }

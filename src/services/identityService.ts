@@ -17,9 +17,41 @@ import { findDriverByEmail } from "../repositories/driverRepo.js";
 import { verifyPassword } from "../auth/password.js";
 import { makeId } from "../lib/ids.js";
 import { issueRefreshToken, signAccessToken, type ClientKind } from "../auth/tokens.js";
+import { assertKnownCity } from "../data/saLocations.js";
+import { execute, query } from "../db/pool.js";
+import { isHostedImageUrl, publicHttpsUrl } from "../lib/mediaUrl.js";
+import type { RowDataPacket } from "mysql2";
+import type { SessionLike } from "../authz/permissions.js";
+import { requireSignedIn } from "../authz/permissions.js";
 
 function hasRole(roles: string[], needle: string): boolean {
   return roles.map((r) => r.toLowerCase()).includes(needle.toLowerCase());
+}
+
+async function upsertUserMeta(userId: number, metaKey: string, metaValue: string) {
+  const existing = await query<(RowDataPacket & { umeta_id: number })[]>(
+    `SELECT umeta_id FROM wp_usermeta WHERE user_id = :userId AND meta_key = :metaKey LIMIT 1`,
+    { userId, metaKey },
+  );
+  if (existing[0]?.umeta_id) {
+    await execute(`UPDATE wp_usermeta SET meta_value = :metaValue WHERE umeta_id = :id`, {
+      metaValue,
+      id: existing[0].umeta_id,
+    });
+    return;
+  }
+  await execute(`INSERT INTO wp_usermeta (user_id, meta_key, meta_value) VALUES (:userId, :metaKey, :metaValue)`, {
+    userId,
+    metaKey,
+    metaValue,
+  });
+}
+
+function optionalPhotoUrl(value?: string): string {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  if (!isHostedImageUrl(raw)) throw validationError("Photo URL is not valid.");
+  return publicHttpsUrl(raw);
 }
 
 /** Resolve a verified WP user into an API principal. */
@@ -124,19 +156,44 @@ export async function register(input: {
   accountType: "customer" | "supplier";
   email: string;
   password: string;
+  passwordConfirm?: string;
   name?: string;
   businessName?: string;
   phone?: string;
   city?: string;
+  avatarUrl?: string;
+  groupPhotoUrl?: string;
   client?: ClientKind;
 }): Promise<{ accessToken?: string; refreshToken?: string; principal?: Principal; supplier?: { id: string; status: string } }> {
   const email = normalizeEmail(input.email);
   if (!email || !input.password) throw validationError("Enter your email address and a password.");
   if (input.password.length < 8) throw validationError("Use a password of at least 8 characters.");
+  if (input.passwordConfirm != null && input.passwordConfirm !== input.password) {
+    throw validationError("Passwords do not match.");
+  }
   const clientKind: ClientKind = input.client === "mobile" || input.client === "web" ? input.client : "unknown";
+
+  let city = "";
+  let province = "";
+  if (input.city?.trim()) {
+    try {
+      const found = assertKnownCity(input.city);
+      city = found?.city || "";
+      province = found?.province || "";
+    } catch {
+      throw validationError("Choose a city from the list.");
+    }
+  }
+
+  const avatarUrl = optionalPhotoUrl(input.avatarUrl);
+  const groupPhotoUrl = optionalPhotoUrl(input.groupPhotoUrl);
 
   if (input.accountType === "customer") {
     const wpUser = await registerWpCustomer(email, input.password, input.name || "");
+    if (city) await upsertUserMeta(wpUser.wpUserId, "billing_city", city);
+    if (input.phone?.trim()) await upsertUserMeta(wpUser.wpUserId, "billing_phone", input.phone.trim());
+    if (avatarUrl) await upsertUserMeta(wpUser.wpUserId, "iuw_avatar_url", avatarUrl);
+    if (groupPhotoUrl) await upsertUserMeta(wpUser.wpUserId, "iuw_group_photo_url", groupPhotoUrl);
     const principal = await principalFromWpUser(wpUser);
     return {
       accessToken: await signAccessToken(principal),
@@ -146,6 +203,7 @@ export async function register(input: {
   }
 
   if (!input.businessName?.trim()) throw validationError("Enter your trading name.");
+  if (!city) throw validationError("Choose a city from the list.");
 
   const wpUser = await createWpUserViaBridge({
     email,
@@ -154,6 +212,8 @@ export async function register(input: {
     roles: ["iuw_supplier"],
   });
 
+  if (avatarUrl) await upsertUserMeta(wpUser.wpUserId, "iuw_avatar_url", avatarUrl);
+
   const supplier = await insertSupplier({
     id: makeId("sup"),
     wp_user_id: wpUser.wpUserId,
@@ -161,7 +221,8 @@ export async function register(input: {
     contact_name: input.name?.trim() || "",
     email,
     phone: input.phone?.trim() || "",
-    city: input.city?.trim() || "",
+    city,
+    province,
     status: "pending",
   });
 
@@ -172,6 +233,19 @@ export async function register(input: {
     principal,
     supplier: { id: supplier.id, status: supplier.status },
   };
+}
+
+export async function updateMyPhotos(
+  session: SessionLike,
+  data: { avatarUrl?: string; groupPhotoUrl?: string },
+) {
+  const principal = requireSignedIn(session);
+  if (!principal.wpUserId) throw validationError("Photos are only available for website accounts.");
+  const avatarUrl = data.avatarUrl !== undefined ? optionalPhotoUrl(data.avatarUrl) : undefined;
+  const groupPhotoUrl = data.groupPhotoUrl !== undefined ? optionalPhotoUrl(data.groupPhotoUrl) : undefined;
+  if (avatarUrl !== undefined) await upsertUserMeta(principal.wpUserId, "iuw_avatar_url", avatarUrl);
+  if (groupPhotoUrl !== undefined) await upsertUserMeta(principal.wpUserId, "iuw_group_photo_url", groupPhotoUrl);
+  return { ok: true, avatarUrl: avatarUrl ?? null, groupPhotoUrl: groupPhotoUrl ?? null };
 }
 
 export function mePayload(principal: Principal) {

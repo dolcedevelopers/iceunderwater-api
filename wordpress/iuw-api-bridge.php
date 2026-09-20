@@ -471,3 +471,37 @@ function iuw_bridge_user_payload( WP_User $user ) {
 		'roles'       => array_values( $user->roles ),
 	);
 }
+
+/**
+ * Accept-then-pay: stash iuw_request_id from the checkout URL onto the Woo order
+ * so the API webhook can match order + customer + request.
+ */
+add_action( 'init', 'iuw_bridge_capture_request_id' );
+function iuw_bridge_capture_request_id() {
+	if ( empty( $_GET['iuw_request_id'] ) ) {
+		return;
+	}
+	$request_id = sanitize_text_field( wp_unslash( (string) $_GET['iuw_request_id'] ) );
+	if ( $request_id === '' ) {
+		return;
+	}
+	if ( ! function_exists( 'WC' ) || ! WC()->session ) {
+		return;
+	}
+	WC()->session->set( 'iuw_request_id', $request_id );
+}
+
+add_action( 'woocommerce_checkout_create_order', 'iuw_bridge_attach_request_id_to_order', 20, 2 );
+function iuw_bridge_attach_request_id_to_order( $order, $data ) {
+	$request_id = '';
+	if ( function_exists( 'WC' ) && WC()->session ) {
+		$request_id = (string) WC()->session->get( 'iuw_request_id' );
+	}
+	if ( $request_id === '' && ! empty( $_GET['iuw_request_id'] ) ) {
+		$request_id = sanitize_text_field( wp_unslash( (string) $_GET['iuw_request_id'] ) );
+	}
+	if ( $request_id === '' ) {
+		return;
+	}
+	$order->update_meta_data( 'iuw_request_id', $request_id );
+}

@@ -1,6 +1,7 @@
 import {
   assertOwnsRecord,
   isAdmin,
+  isCustomer,
   requireAdmin,
   requireRole,
   resolveSupplierScope,
@@ -11,7 +12,7 @@ import { accessDenied, notFound, validationError } from "../lib/errors.js";
 import { isHostedImageUrl, publicHttpsUrl } from "../lib/mediaUrl.js";
 import { makeId, normalizeEmail } from "../lib/ids.js";
 import { centsToRands } from "../lib/money.js";
-import { mapSupplier } from "../serializers/dto.js";
+import { mapSupplier, type SupplierDto } from "../serializers/dto.js";
 import { writeAudit } from "../repositories/auditRepo.js";
 import {
   findSupplierById,
@@ -26,13 +27,88 @@ import { listTransactions, supplierSettlement } from "../repositories/transactio
 import { createWpUserViaBridge } from "../clients/wordpress.js";
 import { uploadImageBuffer } from "./mediaService.js";
 import { repriceSupplierProducts } from "./productService.js";
+import { assertKnownCity, findCity } from "../data/saLocations.js";
 
-export async function listSuppliersFor(session: SessionLike) {
+function resolveCityProvince(cityRaw?: string) {
+  try {
+    const found = assertKnownCity(cityRaw);
+    if (!found) return { city: "", province: "" };
+    return { city: found.city, province: found.province };
+  } catch {
+    throw validationError("Choose a city from the list.");
+  }
+}
+
+export async function listSuppliersFor(
+  session: SessionLike,
+  opts: { city?: string; province?: string; status?: string } = {},
+) {
   requireRole(session, ROLES.ADMIN, ROLES.SUPPLIER);
-  if (isAdmin(session)) return (await listSuppliers()).map(mapSupplier);
+  if (isAdmin(session)) {
+    return (
+      await listSuppliers({
+        status: opts.status,
+        city: opts.city,
+        province: opts.province,
+      })
+    ).map(mapSupplier);
+  }
   const scope = resolveSupplierScope(session);
   const rows = await listSuppliers({ id: scope! });
   return rows.map(mapSupplier);
+}
+
+/**
+ * Public/customer/admin company directory. Never hard-excludes other areas —
+ * returns near / province / national buckets (filtered view still includes others).
+ */
+export async function listCompaniesDirectory(
+  session: SessionLike | null,
+  opts: {
+    city?: string;
+    province?: string;
+    scope?: "city" | "province" | "national";
+    viewerCity?: string;
+  } = {},
+) {
+  const rows = (await listSuppliers({ status: "active" })).map(mapSupplier);
+  const viewerCity =
+    opts.viewerCity ||
+    opts.city ||
+    (session && isCustomer(session) ? "" : "") ||
+    "";
+  const viewer = findCity(viewerCity);
+  const filterCity = opts.city ? findCity(opts.city) : viewer;
+  const filterProvince = opts.province || filterCity?.province || "";
+
+  const near = filterCity
+    ? rows.filter((row) => row.city.toLowerCase() === filterCity.city.toLowerCase())
+    : [];
+  const province = filterProvince
+    ? rows.filter(
+        (row) =>
+          row.province.toLowerCase() === filterProvince.toLowerCase() &&
+          !near.some((n) => n.id === row.id),
+      )
+    : [];
+  const nearAndProvinceIds = new Set([...near, ...province].map((r) => r.id));
+  const national = rows.filter((row) => !nearAndProvinceIds.has(row.id));
+
+  const scope = opts.scope || "national";
+  let primary: SupplierDto[] = rows;
+  if (scope === "city") primary = near.length ? near : rows;
+  else if (scope === "province") primary = [...near, ...province].length ? [...near, ...province] : rows;
+
+  return {
+    scope,
+    viewerCity: filterCity?.city || "",
+    viewerProvince: filterProvince,
+    primary,
+    near,
+    province,
+    national: scope === "national" ? rows : national,
+    all: rows,
+  };
 }
 
 export async function getSupplierFor(session: SessionLike, supplierId: string) {
@@ -64,6 +140,7 @@ export async function createSupplierFor(
   requireAdmin(session);
   const email = normalizeEmail(data.email);
   if (!data.name?.trim() || !email) throw validationError("Name and email are required.");
+  const loc = resolveCityProvince(data.city);
 
   let wpUserId: number | null = null;
   if (data.password) {
@@ -83,7 +160,8 @@ export async function createSupplierFor(
     contact_name: data.contactName?.trim() || "",
     email,
     phone: data.phone?.trim() || "",
-    city: data.city?.trim() || "",
+    city: loc.city,
+    province: loc.province,
     status: "pending",
   });
 
@@ -127,12 +205,21 @@ export async function updateSupplierFor(
       ? Math.max(0, Number(safe.markupPercent))
       : undefined;
 
+  let city: string | undefined;
+  let province: string | undefined;
+  if (typeof safe.city === "string") {
+    const loc = resolveCityProvince(safe.city);
+    city = loc.city;
+    province = loc.province;
+  }
+
   const updated = await updateSupplier(scope!, {
     name: typeof safe.name === "string" ? safe.name : undefined,
     contact_name: typeof safe.contactName === "string" ? safe.contactName : undefined,
     email: typeof safe.email === "string" ? normalizeEmail(safe.email) : undefined,
     phone: typeof safe.phone === "string" ? safe.phone : undefined,
-    city: typeof safe.city === "string" ? safe.city : undefined,
+    city,
+    province,
     logo_url:
       typeof safe.logo === "string"
         ? safe.logo === ""

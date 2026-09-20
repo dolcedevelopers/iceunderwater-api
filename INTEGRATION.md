@@ -52,8 +52,8 @@ Contract source: `Desktop/iceunderwater-mobile` (separate repo from this API).
 
 | App function | Method | Path |
 | --- | --- | --- |
-| `signIn({ accountType, email, password })` | POST | `/auth/login` |
-| `register({ accountType, ... })` | POST | `/auth/register` |
+| `signIn({ accountType, email, password })` | POST | `/auth/login` | App sends `client: "mobile"` — kicks other mobile sessions |
+| `register({ accountType, ... })` | POST | `/auth/register` | Same `client` field |
 | `completeSupplierSignup(...)` | — | **removed** (folded into register) |
 | — | POST | `/auth/refresh` `{ refreshToken }` |
 | — | POST | `/auth/logout` `{ refreshToken }` |

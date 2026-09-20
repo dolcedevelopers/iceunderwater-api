@@ -46,4 +46,8 @@ export function requireAuth(request: FastifyRequest): Principal {
   throw authRequired();
 }
 
+export function tryAuth(request: FastifyRequest): Principal | null {
+  return request.principal || null;
+}
+
 export default fp(authPlugin, { name: "auth" });

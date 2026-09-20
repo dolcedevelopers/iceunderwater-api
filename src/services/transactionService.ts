@@ -192,6 +192,7 @@ export async function syncWooOrder(order: {
   billing?: { email?: string; first_name?: string; last_name?: string };
   customer_id?: number;
   payment_method_title?: string;
+  meta_data?: { key?: string; value?: unknown }[];
   line_items?: {
     product_id: number;
     name: string;
@@ -233,6 +234,7 @@ export async function syncWooOrder(order: {
   }
   const supplier = primarySupplierId ? await findSupplierById(primarySupplierId) : null;
 
+  const status = mapWooStatus(order.status);
   const tx = await upsertTransaction({
     id: makeId("trx"),
     wc_order_id: orderId,
@@ -244,7 +246,7 @@ export async function syncWooOrder(order: {
     supplier_name: supplier?.name || "ICE UNDERWATER",
     items: lines.reduce((sum, l) => sum + (Number(l.quantity) || 0), 0),
     total_cents: randsToCents(Number(order.total) || 0),
-    status: mapWooStatus(order.status),
+    status,
     method: order.payment_method_title || "Payfast",
     created_at: order.date_created ? new Date(order.date_created) : null,
   });
@@ -255,6 +257,27 @@ export async function syncWooOrder(order: {
       ...line,
     })),
   );
+
+  // Link accept-then-pay request when meta + customer match.
+  if (status === "paid") {
+    const meta = Array.isArray(order.meta_data) ? order.meta_data : [];
+    const requestMeta = meta.find((item) => String(item.key || "") === "iuw_request_id");
+    const requestId = String(requestMeta?.value || "").trim();
+    if (requestId) {
+      try {
+        const { fulfillPurchaseRequestFromOrder } = await import("./purchaseRequestService.js");
+        await fulfillPurchaseRequestFromOrder({
+          requestId,
+          customerWpUserId: order.customer_id ? Number(order.customer_id) : null,
+          customerEmail: normalizeEmail(order.billing?.email || ""),
+          wooOrderId: orderId,
+          wooOrderNumber: String(order.number || orderId),
+        });
+      } catch {
+        // Do not fail webhook sync if purchase-request tables are missing/out of date.
+      }
+    }
+  }
 
   // Auto-queue invoice on first sync when still pending receipt.
   // Never fail the webhook if the mail queue insert has a problem.

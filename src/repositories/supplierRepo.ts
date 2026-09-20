@@ -9,6 +9,7 @@ export type SupplierRow = RowDataPacket & {
   email: string;
   phone: string;
   city: string;
+  province: string;
   logo_url: string;
   status: "active" | "pending" | "suspended";
   markup_percent: number;
@@ -16,7 +17,12 @@ export type SupplierRow = RowDataPacket & {
   deleted_at: Date | null;
 };
 
-export async function listSuppliers(filter?: { id?: string; status?: string }): Promise<SupplierRow[]> {
+export async function listSuppliers(filter?: {
+  id?: string;
+  status?: string;
+  city?: string;
+  province?: string;
+}): Promise<SupplierRow[]> {
   const clauses = ["deleted_at IS NULL"];
   const params: Record<string, unknown> = {};
   if (filter?.id) {
@@ -27,8 +33,16 @@ export async function listSuppliers(filter?: { id?: string; status?: string }): 
     clauses.push("status = :status");
     params.status = filter.status;
   }
+  if (filter?.city) {
+    clauses.push("LOWER(city) = LOWER(:city)");
+    params.city = filter.city;
+  }
+  if (filter?.province) {
+    clauses.push("LOWER(province) = LOWER(:province)");
+    params.province = filter.province;
+  }
   return query<SupplierRow[]>(
-    `SELECT * FROM iuw_suppliers WHERE ${clauses.join(" AND ")} ORDER BY created_at DESC`,
+    `SELECT * FROM iuw_suppliers WHERE ${clauses.join(" AND ")} ORDER BY city ASC, name ASC`,
     params,
   );
 }
@@ -57,15 +71,16 @@ export async function insertSupplier(row: {
   email: string;
   phone: string;
   city: string;
+  province?: string;
   logo_url?: string;
   status: SupplierRow["status"];
 }): Promise<SupplierRow> {
   await execute(
     `INSERT INTO iuw_suppliers
-      (id, wp_user_id, name, contact_name, email, phone, city, logo_url, status)
+      (id, wp_user_id, name, contact_name, email, phone, city, province, logo_url, status)
      VALUES
-      (:id, :wp_user_id, :name, :contact_name, :email, :phone, :city, :logo_url, :status)`,
-    { logo_url: "", ...row },
+      (:id, :wp_user_id, :name, :contact_name, :email, :phone, :city, :province, :logo_url, :status)`,
+    { logo_url: "", province: "", ...row },
   );
   const created = await findSupplierById(row.id);
   if (!created) throw new Error("supplier insert failed");
@@ -80,6 +95,7 @@ export async function updateSupplier(
     email: string;
     phone: string;
     city: string;
+    province: string;
     logo_url: string;
     status: SupplierRow["status"];
     markup_percent: number;

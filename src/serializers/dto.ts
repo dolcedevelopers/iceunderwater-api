@@ -9,6 +9,7 @@ export type SupplierDto = {
   email: string;
   phone: string;
   city: string;
+  province: string;
   logo: string;
   status: "active" | "pending" | "suspended";
   /** Admin-set markup % applied to supplier cost → shop selling price. */
@@ -96,6 +97,7 @@ export function mapSupplier(row: {
   email: string;
   phone: string;
   city: string;
+  province?: string;
   logo_url: string;
   status: SupplierDto["status"];
   markup_percent?: number | string | null;
@@ -108,6 +110,7 @@ export function mapSupplier(row: {
     email: row.email,
     phone: row.phone,
     city: row.city,
+    province: row.province || "",
     logo: publicHttpsUrl(row.logo_url),
     status: row.status,
     markupPercent: Number(row.markup_percent) || 0,
@@ -160,9 +163,15 @@ export function mapAdmin(row: {
 }
 
 export type EventGroupMemberDto = {
-  wpUserId: number;
+  id: number;
+  wpUserId: number | null;
   name: string;
+  firstName: string;
+  surname: string;
   email: string;
+  phone: string;
+  photo: string;
+  isGuest: boolean;
   role: "owner" | "member";
   status: "pending" | "active";
 };
@@ -173,6 +182,9 @@ export type EventGroupDto = {
   name: string;
   createdByWpUserId: number;
   membersCanAccept: boolean;
+  stage: string;
+  competitionName: string;
+  groupPhoto: string;
   memberCount: number;
   maxMembers: number;
   spotsLeft: number;
@@ -184,6 +196,7 @@ export type EventGroupDto = {
     canEdit: boolean;
     canDelete: boolean;
     canAccept: boolean;
+    canAddMembers: boolean;
     membershipStatus: "pending" | "active" | null;
   };
   createdAt: string;
@@ -222,16 +235,31 @@ export function mapTransaction(row: {
 }
 
 export function mapEventGroupMember(row: {
-  wp_user_id: number;
+  id?: number;
+  wp_user_id: number | null;
   display_name: string;
+  first_name?: string;
+  surname?: string;
   email: string;
+  phone?: string;
+  photo_url?: string;
+  is_guest?: number | boolean;
   role: "owner" | "member";
   status: "pending" | "active";
 }): EventGroupMemberDto {
+  const firstName = row.first_name || "";
+  const surname = row.surname || "";
+  const composed = [firstName, surname].filter(Boolean).join(" ").trim();
   return {
-    wpUserId: Number(row.wp_user_id),
-    name: row.display_name || row.email,
+    id: Number(row.id) || 0,
+    wpUserId: row.wp_user_id != null ? Number(row.wp_user_id) : null,
+    name: composed || row.display_name || row.email,
+    firstName,
+    surname,
     email: row.email,
+    phone: row.phone || "",
+    photo: publicHttpsUrl(row.photo_url || ""),
+    isGuest: Boolean(row.is_guest) || row.wp_user_id == null,
     role: row.role,
     status: row.status,
   };
@@ -244,6 +272,9 @@ export function mapEventGroup(
     name: string;
     created_by_wp_user_id: number;
     members_can_accept: number | boolean;
+    stage?: string;
+    competition_name?: string;
+    group_photo_url?: string;
     created_at: Date | string;
   },
   members: EventGroupMemberDto[],
@@ -257,6 +288,9 @@ export function mapEventGroup(
     name: row.name,
     createdByWpUserId: Number(row.created_by_wp_user_id),
     membersCanAccept: Boolean(row.members_can_accept),
+    stage: row.stage || "group_stage",
+    competitionName: row.competition_name || "ICE UNDERWATER Warrior Kings",
+    groupPhoto: publicHttpsUrl(row.group_photo_url || ""),
     memberCount,
     maxMembers: EVENT_GROUP_MAX_MEMBERS,
     spotsLeft: Math.max(0, EVENT_GROUP_MAX_MEMBERS - memberCount),
