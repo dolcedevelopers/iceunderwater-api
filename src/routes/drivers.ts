@@ -22,6 +22,8 @@ const createSchema = z
     vehicle: z.string().optional(),
     registration: z.string().optional(),
     licence: z.string().optional(),
+    status: z.enum(["available", "on-delivery", "off-duty"]).optional(),
+    active: z.boolean().optional(),
     password: z.string().min(8).optional(),
   })
   .strict();

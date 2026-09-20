@@ -12,8 +12,7 @@ import { accessDenied, notFound, validationError } from "../lib/errors.js";
 import { config } from "../config.js";
 import { makeId, normalizeEmail } from "../lib/ids.js";
 import { writeAudit } from "../repositories/auditRepo.js";
-import { findProductOwner } from "../repositories/productRepo.js";
-import { listSuppliers } from "../repositories/supplierRepo.js";
+import { findProductOwner, listSupplierIdsForProductCategory } from "../repositories/productRepo.js";
 import { insertNotification } from "../repositories/notificationRepo.js";
 import {
   acceptPurchaseRequest,
@@ -27,7 +26,11 @@ import {
 } from "../repositories/purchaseRequestRepo.js";
 import { getWcProduct } from "../clients/woocommerce.js";
 
-function mapRequest(row: PurchaseRequestRow) {
+/**
+ * `checkoutUrl` is the customer's payment link. Companies accept and wait to be
+ * paid, so it is stripped for every audience except the owning customer.
+ */
+function mapRequest(row: PurchaseRequestRow, options: { includeCheckoutUrl?: boolean } = {}) {
   return {
     id: row.id,
     customerWpUserId: Number(row.customer_wp_user_id),
@@ -39,7 +42,7 @@ function mapRequest(row: PurchaseRequestRow) {
     acceptedSupplierId: row.accepted_supplier_id || null,
     wooOrderId: row.woo_order_id != null ? Number(row.woo_order_id) : null,
     wooOrderNumber: row.woo_order_number || null,
-    checkoutUrl: row.checkout_url || "",
+    checkoutUrl: options.includeCheckoutUrl ? row.checkout_url || "" : "",
     createdAt: new Date(row.created_at).toISOString(),
     acceptedAt: row.accepted_at ? new Date(row.accepted_at).toISOString() : "",
     paidAt: row.paid_at ? new Date(row.paid_at).toISOString() : "",
@@ -56,13 +59,22 @@ function buildCheckoutUrl(wcProductId: number, qty: number, requestId: string): 
   return `${base}/checkout/?${params.toString()}`;
 }
 
+/**
+ * Who should see this request: the company that owns the product, plus any
+ * company stocking the same category. Never every company on the platform —
+ * a clothing seller should not be pinged about ice.
+ */
 async function suppliersForProduct(wcProductId: number): Promise<string[]> {
-  const owner = await findProductOwner(wcProductId);
-  if (owner?.supplier_id) return [owner.supplier_id];
+  const ids = new Set<string>();
 
-  // Shared catalogue with no owner: notify all active companies.
-  const active = await listSuppliers({ status: "active" });
-  return active.map((row) => row.id);
+  const owner = await findProductOwner(wcProductId);
+  if (owner?.supplier_id) ids.add(owner.supplier_id);
+
+  for (const supplierId of await listSupplierIdsForProductCategory(wcProductId)) {
+    ids.add(supplierId);
+  }
+
+  return [...ids];
 }
 
 export async function createPurchaseRequestFor(
@@ -129,14 +141,16 @@ export async function createPurchaseRequestFor(
 export async function listPurchaseRequestsFor(session: SessionLike) {
   const principal = requireSignedIn(session);
   if (isAdmin(principal)) {
-    return (await listPurchaseRequests({})).map(mapRequest);
+    return (await listPurchaseRequests({})).map((row) => mapRequest(row));
   }
   if (isSupplier(principal)) {
     const scope = resolveSupplierScope(principal);
-    return (await listPurchaseRequests({ supplierId: scope! })).map(mapRequest);
+    return (await listPurchaseRequests({ supplierId: scope! })).map((row) => mapRequest(row));
   }
   if (isCustomer(principal) && principal.wpUserId) {
-    return (await listPurchaseRequests({ customerWpUserId: principal.wpUserId })).map(mapRequest);
+    return (await listPurchaseRequests({ customerWpUserId: principal.wpUserId })).map((row) =>
+      mapRequest(row, { includeCheckoutUrl: true }),
+    );
   }
   throw accessDenied();
 }
@@ -148,7 +162,7 @@ export async function getPurchaseRequestFor(session: SessionLike, id: string) {
 
   if (isAdmin(principal)) return mapRequest(row);
   if (isCustomer(principal) && Number(row.customer_wp_user_id) === Number(principal.wpUserId)) {
-    return mapRequest(row);
+    return mapRequest(row, { includeCheckoutUrl: true });
   }
   if (isSupplier(principal)) {
     const scope = resolveSupplierScope(principal);
@@ -199,7 +213,7 @@ export async function startCheckoutFor(session: SessionLike, id: string) {
     throw validationError("Wait for a company to accept before paying.");
   }
   await markCheckoutStarted(id);
-  return { ...mapRequest({ ...row, status: "checkout_started" }), checkoutUrl: row.checkout_url };
+  return mapRequest({ ...row, status: "checkout_started" }, { includeCheckoutUrl: true });
 }
 
 /**

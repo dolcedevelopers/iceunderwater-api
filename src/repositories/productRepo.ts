@@ -25,6 +25,36 @@ export async function findProductOwner(wcProductId: number): Promise<ProductOwne
   return rows[0] || null;
 }
 
+/**
+ * Active suppliers that stock the requested product, or anything in its
+ * `product_cat` terms. Keeps an ice request away from a clothing company.
+ */
+export async function listSupplierIdsForProductCategory(wcProductId: number): Promise<string[]> {
+  const rows = await query<(RowDataPacket & { supplier_id: string })[]>(
+    `SELECT DISTINCT po.supplier_id AS supplier_id
+       FROM iuw_product_owners po
+       INNER JOIN wp_posts p ON p.ID = po.wc_product_id
+       INNER JOIN iuw_suppliers s ON s.id = po.supplier_id
+       INNER JOIN wp_term_relationships tr ON tr.object_id = p.ID
+       INNER JOIN wp_term_taxonomy tt
+         ON tt.term_taxonomy_id = tr.term_taxonomy_id AND tt.taxonomy = 'product_cat'
+      WHERE po.deleted_at IS NULL
+        AND s.deleted_at IS NULL
+        AND s.status = 'active'
+        AND p.post_type = 'product'
+        AND p.post_status = 'publish'
+        AND tt.term_taxonomy_id IN (
+          SELECT tr2.term_taxonomy_id
+            FROM wp_term_relationships tr2
+            INNER JOIN wp_term_taxonomy tt2
+              ON tt2.term_taxonomy_id = tr2.term_taxonomy_id AND tt2.taxonomy = 'product_cat'
+           WHERE tr2.object_id = :wcProductId
+        )`,
+    { wcProductId },
+  );
+  return rows.map((row) => row.supplier_id);
+}
+
 export async function upsertProductOwner(wcProductId: number, supplierId: string): Promise<void> {
   await execute(
     `INSERT INTO iuw_product_owners (wc_product_id, supplier_id)

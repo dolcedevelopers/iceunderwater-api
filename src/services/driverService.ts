@@ -41,6 +41,8 @@ export async function createDriverFor(
     vehicle?: string;
     registration?: string;
     licence?: string;
+    status?: "available" | "on-delivery" | "off-duty";
+    active?: boolean;
     password?: string;
   },
   ip?: string,
@@ -58,6 +60,8 @@ export async function createDriverFor(
     vehicle: data.vehicle?.trim() || "",
     registration: data.registration?.trim() || "",
     licence: data.licence?.trim() || "",
+    status: data.status,
+    active: data.active,
     password_hash: data.password ? await hashPassword(data.password) : null,
   });
   const dto = mapDriver(row);
