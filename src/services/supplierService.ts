@@ -59,8 +59,20 @@ export async function listSuppliersFor(
 }
 
 /**
- * Public/customer/admin company directory. Never hard-excludes other areas —
+ * Markup is our pricing arrangement with each company, so it never leaves the
+ * admin console — a customer browsing the directory must not see it, and one
+ * company must never see another's.
+ */
+function toDirectoryEntry(row: SupplierDto): SupplierDto {
+  return { ...row, markupPercent: 0 };
+}
+
+/**
+ * Customer + admin company directory. Never hard-excludes other areas —
  * returns near / province / national buckets (filtered view still includes others).
+ *
+ * Companies are deliberately excluded: they manage their own catalogue and have
+ * no business browsing competitors through this endpoint.
  */
 export async function listCompaniesDirectory(
   session: SessionLike | null,
@@ -71,7 +83,12 @@ export async function listCompaniesDirectory(
     viewerCity?: string;
   } = {},
 ) {
-  const rows = (await listSuppliers({ status: "active" })).map(mapSupplier);
+  requireRole(session, ROLES.CUSTOMER, ROLES.ADMIN);
+  const showInternal = isAdmin(session);
+  const rows = (await listSuppliers({ status: "active" })).map((row) => {
+    const dto = mapSupplier(row);
+    return showInternal ? dto : toDirectoryEntry(dto);
+  });
   const viewerCity =
     opts.viewerCity ||
     opts.city ||

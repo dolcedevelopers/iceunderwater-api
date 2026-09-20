@@ -15,7 +15,6 @@ import {
 } from "../services/supplierService.js";
 import { notFound } from "../lib/errors.js";
 import { readImageFromRequest } from "../lib/uploadRequest.js";
-import { tryAuth } from "../plugins/auth.js";
 
 const createSchema = z
   .object({
@@ -61,8 +60,7 @@ const supplierRoutes: FastifyPluginAsync = async (app) => {
   /** Customer + admin company directory (grouped, never hard-excludes other areas). */
   app.get("/companies", async (request) => {
     const q = directoryQuery.parse(request.query || {});
-    const session = tryAuth(request);
-    return listCompaniesDirectory(session, q);
+    return listCompaniesDirectory(requireAuth(request), q);
   });
 
   app.post("/suppliers", async (request) => {
