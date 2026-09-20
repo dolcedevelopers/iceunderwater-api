@@ -145,7 +145,7 @@ export async function pingWooCommerce(): Promise<boolean> {
     await httpJson(wcUrl("/system_status"), {
       headers: { Authorization: wcAuthHeader() },
       retries: 0,
-      timeoutMs: 5000,
+      timeoutMs: 12000,
     });
     return true;
   } catch (error) {
@@ -155,7 +155,7 @@ export async function pingWooCommerce(): Promise<boolean> {
       await httpJson(wcUrl("/products?per_page=1"), {
         headers: { Authorization: wcAuthHeader() },
         retries: 0,
-        timeoutMs: 5000,
+        timeoutMs: 12000,
       });
       return true;
     } catch {

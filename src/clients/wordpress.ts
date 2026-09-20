@@ -168,7 +168,8 @@ export async function uploadWpMedia(buffer: Buffer, filename: string, mime: stri
 
 export async function pingWordpress(): Promise<boolean> {
   try {
-    const response = await fetch(`${config.WP_BASE_URL}/wp-json`, { signal: AbortSignal.timeout(5000) });
+    // Shared hosting round-trips from Render regularly exceed 5s; keep this above that.
+    const response = await fetch(`${config.WP_BASE_URL}/wp-json`, { signal: AbortSignal.timeout(12000) });
     return response.ok;
   } catch {
     return false;
