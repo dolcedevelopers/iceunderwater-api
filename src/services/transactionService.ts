@@ -13,12 +13,12 @@ import {
 import { accessDenied, validationError } from "../lib/errors.js";
 import { makeId, normalizeEmail } from "../lib/ids.js";
 import { randsToCents } from "../lib/money.js";
-import { mapTransaction } from "../serializers/dto.js";
+import { mapTransaction, type SupplierInvoiceIdentity, type TransactionDto } from "../serializers/dto.js";
 import { writeAudit } from "../repositories/auditRepo.js";
 import {
   findProductOwner,
 } from "../repositories/productRepo.js";
-import { findSupplierById } from "../repositories/supplierRepo.js";
+import { findSupplierById, listSuppliers, type SupplierRow } from "../repositories/supplierRepo.js";
 import {
   findTransactionById,
   findTransactionByReference,
@@ -27,6 +27,7 @@ import {
   markReceiptSent,
   updateTransactionStatus,
   upsertTransaction,
+  type TransactionRow,
 } from "../repositories/transactionRepo.js";
 import { createWcRefund, updateWcOrderStatus } from "../clients/woocommerce.js";
 import { sendWcInvoice } from "../clients/wordpress.js";
@@ -51,6 +52,35 @@ export function mapWooStatus(status: string | undefined | null): "paid" | "pendi
   }
 }
 
+function invoiceIdentityOf(supplier: SupplierRow | null | undefined): SupplierInvoiceIdentity | null {
+  if (!supplier) return null;
+  return {
+    vatNumber: supplier.vat_number || "",
+    registrationNumber: supplier.registration_number || "",
+    address: supplier.address || "",
+  };
+}
+
+/**
+ * A generated invoice has to print the seller's VAT number, company
+ * registration number and trading address, so every receipt is hydrated from
+ * the supplier record before it leaves the API.
+ */
+async function toInvoices(rows: TransactionRow[]): Promise<TransactionDto[]> {
+  const wanted = new Set(rows.map((row) => row.supplier_id).filter(Boolean));
+  if (!wanted.size) return rows.map((row) => mapTransaction(row));
+  const identities = new Map<string, SupplierInvoiceIdentity>();
+  for (const supplier of await listSuppliers({})) {
+    if (wanted.has(supplier.id)) identities.set(supplier.id, invoiceIdentityOf(supplier)!);
+  }
+  return rows.map((row) => mapTransaction(row, identities.get(row.supplier_id) || null));
+}
+
+async function toInvoice(row: TransactionRow): Promise<TransactionDto> {
+  const supplier = row.supplier_id ? await findSupplierById(row.supplier_id) : null;
+  return mapTransaction(row, invoiceIdentityOf(supplier));
+}
+
 export async function listTransactionsFor(
   session: SessionLike,
   opts: { supplierId?: string; reference?: string } = {},
@@ -62,13 +92,13 @@ export async function listTransactionsFor(
       supplierId: opts.supplierId || null,
       reference: opts.reference,
     });
-    return rows.map(mapTransaction);
+    return toInvoices(rows);
   }
 
   if (isSupplier(session)) {
     const scope = resolveSupplierScope(session, opts.supplierId);
     const rows = await listTransactions({ supplierId: scope, reference: opts.reference });
-    return rows.map(mapTransaction);
+    return toInvoices(rows);
   }
 
   if (isCustomer(session)) {
@@ -76,11 +106,15 @@ export async function listTransactionsFor(
       customerEmail: identityEmail(session),
       reference: opts.reference,
     });
-    return rows.filter((row) => canAccessTransaction(session, {
-      supplierId: row.supplier_id,
-      customerEmail: row.customer_email,
-      customerId: row.customer_wp_user_id,
-    })).map(mapTransaction);
+    return toInvoices(
+      rows.filter((row) =>
+        canAccessTransaction(session, {
+          supplierId: row.supplier_id,
+          customerEmail: row.customer_email,
+          customerId: row.customer_wp_user_id,
+        }),
+      ),
+    );
   }
 
   throw accessDenied();
@@ -94,7 +128,7 @@ export async function getTransactionFor(session: SessionLike, id: string) {
     customerEmail: row.customer_email,
     customerId: row.customer_wp_user_id,
   } : null);
-  return mapTransaction(row!);
+  return toInvoice(row!);
 }
 
 export async function listMyReceipts(session: SessionLike) {
@@ -130,7 +164,7 @@ export async function updateTransactionFor(
     before: mapTransaction(existing),
     after: updated ? mapTransaction(updated) : null,
   });
-  return updated ? mapTransaction(updated) : null;
+  return updated ? toInvoice(updated) : null;
 }
 
 export async function sendReceiptFor(session: SessionLike, id: string, ip?: string) {
@@ -304,5 +338,5 @@ export async function findByReferenceForClient(session: SessionLike, reference: 
     customerEmail: row.customer_email,
     customerId: row.customer_wp_user_id,
   } : null);
-  return mapTransaction(row!);
+  return toInvoice(row!);
 }

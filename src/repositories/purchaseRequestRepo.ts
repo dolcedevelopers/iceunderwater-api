@@ -14,6 +14,8 @@ export type PurchaseRequestRow = RowDataPacket & {
   id: string;
   customer_wp_user_id: number;
   customer_email: string;
+  /** Set when the buyer is itself a company ordering from another company. */
+  requester_supplier_id: string | null;
   wc_product_id: number;
   product_name: string;
   qty: number;
@@ -22,6 +24,8 @@ export type PurchaseRequestRow = RowDataPacket & {
   woo_order_id: number | null;
   woo_order_number: string | null;
   checkout_url: string;
+  expires_at: Date | null;
+  resend_count: number;
   created_at: Date;
   updated_at: Date;
   accepted_at: Date | null;
@@ -36,24 +40,79 @@ export type PurchaseOfferRow = RowDataPacket & {
   created_at: Date;
 };
 
+function acceptWindowMinutes(value: number): number {
+  const minutes = Math.floor(Number(value));
+  if (!Number.isFinite(minutes)) return 15;
+  return Math.min(120, Math.max(1, minutes));
+}
+
 export async function insertPurchaseRequest(row: {
   id: string;
   customer_wp_user_id: number;
   customer_email: string;
+  requester_supplier_id: string | null;
   wc_product_id: number;
   product_name: string;
   qty: number;
+  window_minutes: number;
 }): Promise<PurchaseRequestRow> {
+  const windowMinutes = acceptWindowMinutes(row.window_minutes);
+  // INTERVAL cannot take a bound parameter on this driver, so the window is inlined after clamping.
   await execute(
     `INSERT INTO iuw_purchase_requests
-      (id, customer_wp_user_id, customer_email, wc_product_id, product_name, qty, status)
+      (id, customer_wp_user_id, customer_email, requester_supplier_id,
+       wc_product_id, product_name, qty, status, expires_at)
      VALUES
-      (:id, :customer_wp_user_id, :customer_email, :wc_product_id, :product_name, :qty, 'open')`,
+      (:id, :customer_wp_user_id, :customer_email, :requester_supplier_id,
+       :wc_product_id, :product_name, :qty, 'open',
+       DATE_ADD(UTC_TIMESTAMP(3), INTERVAL ${windowMinutes} MINUTE))`,
     row,
   );
   const created = await findPurchaseRequestById(row.id);
   if (!created) throw new Error("purchase request insert failed");
   return created;
+}
+
+/**
+ * Flip lapsed requests to `expired` before anything reads or accepts them, so
+ * the stored status is the truth and no caller has to re-derive it.
+ */
+export async function expireStalePurchaseRequests(): Promise<void> {
+  await execute(
+    `UPDATE iuw_purchase_requests
+        SET status = 'expired'
+      WHERE status = 'open' AND expires_at IS NOT NULL AND expires_at <= UTC_TIMESTAMP(3)`,
+  );
+}
+
+/**
+ * Requester amends the quantity and puts the request back in front of
+ * companies. Offers are reset so everyone gets a fresh look at it.
+ */
+export async function resendPurchaseRequest(input: {
+  requestId: string;
+  qty: number;
+  windowMinutes: number;
+}): Promise<PurchaseRequestRow> {
+  const windowMinutes = acceptWindowMinutes(input.windowMinutes);
+  await execute(
+    `UPDATE iuw_purchase_requests
+        SET qty = :qty,
+            status = 'open',
+            accepted_supplier_id = NULL,
+            accepted_at = NULL,
+            checkout_url = '',
+            resend_count = resend_count + 1,
+            expires_at = DATE_ADD(UTC_TIMESTAMP(3), INTERVAL ${windowMinutes} MINUTE)
+      WHERE id = :requestId AND status IN ('open', 'expired')`,
+    input,
+  );
+  await execute(`DELETE FROM iuw_purchase_request_offers WHERE request_id = :requestId`, {
+    requestId: input.requestId,
+  });
+  const updated = await findPurchaseRequestById(input.requestId);
+  if (!updated) throw notFound("That request is not available.");
+  return updated;
 }
 
 export async function insertPurchaseOffers(requestId: string, supplierIds: string[]): Promise<void> {
@@ -90,8 +149,12 @@ export async function listPurchaseRequests(filter: {
     params.status = filter.status;
   }
   if (filter.supplierId) {
+    // A company sees requests it was offered, ones it accepted, and its own
+    // orders placed with other companies.
     clauses.push(
-      `(accepted_supplier_id = :supplierId OR id IN (
+      `(accepted_supplier_id = :supplierId
+        OR requester_supplier_id = :supplierId
+        OR id IN (
          SELECT request_id FROM iuw_purchase_request_offers WHERE supplier_id = :supplierId
        ))`,
     );
@@ -109,13 +172,24 @@ export async function acceptPurchaseRequest(
   checkoutUrl: string,
 ): Promise<PurchaseRequestRow> {
   return withTransaction(async (conn) => {
-    const [rows] = await conn.query<PurchaseRequestRow[]>(
-      `SELECT * FROM iuw_purchase_requests WHERE id = ? FOR UPDATE`,
+    // Expiry is evaluated by the database so it cannot drift with server clocks.
+    const [rows] = await conn.query<(PurchaseRequestRow & { is_expired: number })[]>(
+      `SELECT *, (expires_at IS NOT NULL AND expires_at <= UTC_TIMESTAMP(3)) AS is_expired
+         FROM iuw_purchase_requests WHERE id = ? FOR UPDATE`,
       [requestId],
     );
     const row = rows[0];
     if (!row) throw notFound("That request is not available.");
+    if (row.requester_supplier_id && row.requester_supplier_id === supplierId) {
+      throw conflict("You cannot accept your own order.");
+    }
     if (row.status !== "open") throw conflict("Another company already accepted this request.");
+    if (Number(row.is_expired)) {
+      await conn.query(`UPDATE iuw_purchase_requests SET status = 'expired' WHERE id = ? AND status = 'open'`, [
+        requestId,
+      ]);
+      throw conflict("This request expired before it was accepted.");
+    }
 
     const [offers] = await conn.query<PurchaseOfferRow[]>(
       `SELECT * FROM iuw_purchase_request_offers WHERE request_id = ? AND supplier_id = ? LIMIT 1`,
@@ -158,7 +232,7 @@ export async function markPurchaseRequestPaid(input: {
      SET status = 'paid', woo_order_id = :wooOrderId, woo_order_number = :wooOrderNumber, paid_at = UTC_TIMESTAMP(3)
      WHERE id = :requestId
        AND customer_wp_user_id = :customerWpUserId
-       AND status IN ('accepted', 'checkout_started', 'open')`,
+       AND status IN ('accepted', 'checkout_started', 'open', 'expired')`,
     input,
   );
   return Boolean(result.affectedRows);

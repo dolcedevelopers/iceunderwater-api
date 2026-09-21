@@ -56,7 +56,7 @@ async function main() {
       for (const statement of splitStatements(sql)) {
         await conn.query(statement);
       }
-      await conn.execute("INSERT INTO iuw_schema_migrations (id) VALUES (?)", [id]);
+      await conn.execute("INSERT IGNORE INTO iuw_schema_migrations (id) VALUES (?)", [id]);
       console.log(`Applied ${id}`);
     }
     console.log("Migrations complete.");
@@ -65,11 +65,21 @@ async function main() {
   }
 }
 
+/**
+ * Comment lines are stripped per statement rather than per chunk: a file that
+ * opens with a `--` header would otherwise have its first statement discarded.
+ */
 function splitStatements(sql: string): string[] {
   return sql
     .split(/;\s*\n/)
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0 && !s.startsWith("--"));
+    .map((statement) =>
+      statement
+        .split("\n")
+        .filter((line) => !line.trim().startsWith("--"))
+        .join("\n")
+        .trim(),
+    )
+    .filter((statement) => statement.length > 0);
 }
 
 main().catch((error) => {

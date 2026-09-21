@@ -10,6 +10,10 @@ export type SupplierDto = {
   phone: string;
   city: string;
   province: string;
+  /** Legal identity a valid invoice has to print. Empty until the company fills it in. */
+  vatNumber: string;
+  registrationNumber: string;
+  address: string;
   logo: string;
   status: "active" | "pending" | "suspended";
   /** Admin-set markup % applied to supplier cost → shop selling price. */
@@ -76,12 +80,25 @@ export type TransactionDto = {
   customerEmail: string;
   supplierId: string;
   supplierName: string;
+  /**
+   * Supplier legal identity copied onto the invoice. Only ever returned with a
+   * transaction the caller is already allowed to read.
+   */
+  supplierVatNumber: string;
+  supplierRegistrationNumber: string;
+  supplierAddress: string;
   items: number;
   total: number;
   status: "paid" | "pending" | "refunded" | "failed";
   method: string;
   createdAt: string;
   receiptSentAt: string;
+};
+
+export type SupplierInvoiceIdentity = {
+  vatNumber: string;
+  registrationNumber: string;
+  address: string;
 };
 
 export function toIso(value: Date | string | null | undefined): string {
@@ -98,6 +115,9 @@ export function mapSupplier(row: {
   phone: string;
   city: string;
   province?: string;
+  vat_number?: string | null;
+  registration_number?: string | null;
+  address?: string | null;
   logo_url: string;
   status: SupplierDto["status"];
   markup_percent?: number | string | null;
@@ -111,6 +131,9 @@ export function mapSupplier(row: {
     phone: row.phone,
     city: row.city,
     province: row.province || "",
+    vatNumber: row.vat_number || "",
+    registrationNumber: row.registration_number || "",
+    address: row.address || "",
     logo: publicHttpsUrl(row.logo_url),
     status: row.status,
     markupPercent: Number(row.markup_percent) || 0,
@@ -216,7 +239,7 @@ export function mapTransaction(row: {
   method: string;
   created_at: Date | string;
   receipt_sent_at: Date | string | null;
-}): TransactionDto {
+}, supplier?: SupplierInvoiceIdentity | null): TransactionDto {
   return {
     id: row.id,
     reference: row.reference,
@@ -225,6 +248,9 @@ export function mapTransaction(row: {
     customerEmail: row.customer_email,
     supplierId: row.supplier_id,
     supplierName: row.supplier_name,
+    supplierVatNumber: supplier?.vatNumber || "",
+    supplierRegistrationNumber: supplier?.registrationNumber || "",
+    supplierAddress: supplier?.address || "",
     items: row.items,
     total: centsToRands(row.total_cents),
     status: row.status,

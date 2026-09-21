@@ -126,6 +126,18 @@ export function requireTransactionAccess(session: SessionLike, transaction: Tran
 /** Customers attend ICE UNDERWATER events; suppliers and drivers do not manage groups. */
 export const EVENT_GROUP_MAX_MEMBERS = 6;
 
+/**
+ * How long a purchase request stays open for a company to accept. Once it
+ * lapses the requester can change the quantity and resend, rather than waiting
+ * indefinitely on companies that cannot fill the order.
+ */
+export const PURCHASE_REQUEST_ACCEPT_WINDOW_MINUTES = 15;
+
+/** Buying is open to shoppers and to companies ordering from other companies. */
+export function canCreatePurchaseRequests(session: SessionLike): boolean {
+  return isCustomer(session) || isSupplier(session);
+}
+
 export type EventGroupAccess = {
   createdByWpUserId: number;
   membersCanAccept: boolean;

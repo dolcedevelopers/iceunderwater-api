@@ -59,12 +59,16 @@ export async function listSuppliersFor(
 }
 
 /**
- * Markup is our pricing arrangement with each company, so it never leaves the
- * admin console — a customer browsing the directory must not see it, and one
- * company must never see another's.
+ * The directory is a buyer-facing listing, so it carries only what a buyer
+ * needs to choose a company: name, logo, trading address and area.
+ *
+ * Markup is our pricing arrangement with each company. VAT and company
+ * registration numbers are legal identifiers that belong on the company's own
+ * profile, in the admin console and on invoices — they must not leak from one
+ * company to another through this listing.
  */
 function toDirectoryEntry(row: SupplierDto): SupplierDto {
-  return { ...row, markupPercent: 0 };
+  return { ...row, markupPercent: 0, vatNumber: "", registrationNumber: "" };
 }
 
 /**
@@ -149,6 +153,9 @@ export async function createSupplierFor(
     email: string;
     phone?: string;
     city?: string;
+    vatNumber?: string;
+    registrationNumber?: string;
+    address?: string;
     password?: string;
     markupPercent?: number;
   },
@@ -179,6 +186,9 @@ export async function createSupplierFor(
     phone: data.phone?.trim() || "",
     city: loc.city,
     province: loc.province,
+    vat_number: data.vatNumber?.trim() || "",
+    registration_number: data.registrationNumber?.trim() || "",
+    address: data.address?.trim() || "",
     status: "pending",
   });
 
@@ -237,6 +247,10 @@ export async function updateSupplierFor(
     phone: typeof safe.phone === "string" ? safe.phone : undefined,
     city,
     province,
+    vat_number: typeof safe.vatNumber === "string" ? safe.vatNumber.trim() : undefined,
+    registration_number:
+      typeof safe.registrationNumber === "string" ? safe.registrationNumber.trim() : undefined,
+    address: typeof safe.address === "string" ? safe.address.trim() : undefined,
     logo_url:
       typeof safe.logo === "string"
         ? safe.logo === ""

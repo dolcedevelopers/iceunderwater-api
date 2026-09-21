@@ -6,6 +6,7 @@ import {
   createPurchaseRequestFor,
   getPurchaseRequestFor,
   listPurchaseRequestsFor,
+  resendPurchaseRequestFor,
   startCheckoutFor,
 } from "../services/purchaseRequestService.js";
 
@@ -36,6 +37,11 @@ const purchaseRequestRoutes: FastifyPluginAsync = async (app) => {
   app.post<{ Params: { id: string } }>("/purchase-requests/:id/checkout", async (request) =>
     startCheckoutFor(requireAuth(request), request.params.id),
   );
+
+  app.post<{ Params: { id: string } }>("/purchase-requests/:id/resend", async (request) => {
+    const body = z.object({ qty: z.coerce.number().int().positive().optional() }).strict().parse(request.body ?? {});
+    return resendPurchaseRequestFor(requireAuth(request), request.params.id, body, request.ip);
+  });
 };
 
 export default purchaseRequestRoutes;

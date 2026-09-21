@@ -10,6 +10,10 @@ export type SupplierRow = RowDataPacket & {
   phone: string;
   city: string;
   province: string;
+  /** Legal identity printed on generated invoices. */
+  vat_number: string;
+  registration_number: string;
+  address: string;
   logo_url: string;
   status: "active" | "pending" | "suspended";
   markup_percent: number;
@@ -72,15 +76,20 @@ export async function insertSupplier(row: {
   phone: string;
   city: string;
   province?: string;
+  vat_number?: string;
+  registration_number?: string;
+  address?: string;
   logo_url?: string;
   status: SupplierRow["status"];
 }): Promise<SupplierRow> {
   await execute(
     `INSERT INTO iuw_suppliers
-      (id, wp_user_id, name, contact_name, email, phone, city, province, logo_url, status)
+      (id, wp_user_id, name, contact_name, email, phone, city, province,
+       vat_number, registration_number, address, logo_url, status)
      VALUES
-      (:id, :wp_user_id, :name, :contact_name, :email, :phone, :city, :province, :logo_url, :status)`,
-    { logo_url: "", province: "", ...row },
+      (:id, :wp_user_id, :name, :contact_name, :email, :phone, :city, :province,
+       :vat_number, :registration_number, :address, :logo_url, :status)`,
+    { logo_url: "", province: "", vat_number: "", registration_number: "", address: "", ...row },
   );
   const created = await findSupplierById(row.id);
   if (!created) throw new Error("supplier insert failed");
@@ -96,6 +105,9 @@ export async function updateSupplier(
     phone: string;
     city: string;
     province: string;
+    vat_number: string;
+    registration_number: string;
+    address: string;
     logo_url: string;
     status: SupplierRow["status"];
     markup_percent: number;

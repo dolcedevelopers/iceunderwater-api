@@ -30,6 +30,10 @@ const registerSchema = z
     businessName: z.string().optional(),
     phone: z.string().optional(),
     city: z.string().optional(),
+    /** Company invoice identity — optional at sign-up, editable later in the console. */
+    vatNumber: z.string().max(64, "VAT number is too long.").optional(),
+    registrationNumber: z.string().max(64, "Company registration number is too long.").optional(),
+    address: z.string().max(512, "Address is too long.").optional(),
     avatarUrl: z.string().optional(),
     groupPhotoUrl: z.string().optional(),
     client: z.enum(["mobile", "web"]).optional(),

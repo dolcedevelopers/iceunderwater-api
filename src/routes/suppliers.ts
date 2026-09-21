@@ -16,6 +16,14 @@ import {
 import { notFound } from "../lib/errors.js";
 import { readImageFromRequest } from "../lib/uploadRequest.js";
 
+/**
+ * Invoice identity. Optional so existing companies keep working, but bounded so
+ * a typo cannot overflow the column, and the messages are what the app shows.
+ */
+const vatNumberSchema = z.string().max(64, "VAT number is too long.").optional();
+const registrationNumberSchema = z.string().max(64, "Company registration number is too long.").optional();
+const addressSchema = z.string().max(512, "Address is too long.").optional();
+
 const createSchema = z
   .object({
     name: z.string().min(1),
@@ -23,6 +31,9 @@ const createSchema = z
     email: z.string().email(),
     phone: z.string().optional(),
     city: z.string().optional(),
+    vatNumber: vatNumberSchema,
+    registrationNumber: registrationNumberSchema,
+    address: addressSchema,
     password: z.string().min(8).optional(),
     markupPercent: z.number().min(0).max(1000).optional(),
   })
@@ -35,6 +46,9 @@ const patchSchema = z
     email: z.string().email().optional(),
     phone: z.string().optional(),
     city: z.string().optional(),
+    vatNumber: vatNumberSchema,
+    registrationNumber: registrationNumberSchema,
+    address: addressSchema,
     logo: z.string().optional(),
     status: z.enum(["active", "pending", "suspended"]).optional(),
     /** Admin-only: percent markup on supplier cost (e.g. 15 = +15%). */

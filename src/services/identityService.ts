@@ -161,6 +161,9 @@ export async function register(input: {
   businessName?: string;
   phone?: string;
   city?: string;
+  vatNumber?: string;
+  registrationNumber?: string;
+  address?: string;
   avatarUrl?: string;
   groupPhotoUrl?: string;
   client?: ClientKind;
@@ -223,6 +226,9 @@ export async function register(input: {
     phone: input.phone?.trim() || "",
     city,
     province,
+    vat_number: input.vatNumber?.trim() || "",
+    registration_number: input.registrationNumber?.trim() || "",
+    address: input.address?.trim() || "",
     status: "pending",
   });
 
