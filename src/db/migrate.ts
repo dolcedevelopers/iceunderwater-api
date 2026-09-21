@@ -4,24 +4,72 @@ import { fileURLToPath } from "node:url";
 import mysql from "mysql2/promise";
 import { config } from "../config.js";
 import { parseDatabaseUrl } from "./connectionOptions.js";
+import { ensureLiveSchemaOnConnection } from "./ensureSchema.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const migrationsDir = path.resolve(__dirname, "../../migrations");
 
-async function main() {
-  const down = process.argv.includes("--down");
-  const url = config.DATABASE_MIGRATE_URL || config.DATABASE_URL;
-  const conn = await mysql.createConnection(parseDatabaseUrl(url, config.DATABASE_SSL));
+function databaseKey(url: string): string {
+  const parsed = new URL(url);
+  return `${parsed.hostname}:${parsed.port || "3306"}${parsed.pathname}`;
+}
 
-  try {
-    await conn.query(`
+async function applyFileMigrations(conn: mysql.Connection): Promise<void> {
+  await conn.query(`
       CREATE TABLE IF NOT EXISTS iuw_schema_migrations (
         id VARCHAR(128) NOT NULL PRIMARY KEY,
         applied_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
 
-    if (down) {
+  const files = (await readdir(migrationsDir))
+    .filter((f) => f.endsWith(".sql") && !f.endsWith(".down.sql"))
+    .sort();
+
+  for (const file of files) {
+    const id = file.replace(/\.sql$/, "");
+    const [existing] = await conn.query<{ id: string }[] & mysql.RowDataPacket[]>(
+      "SELECT id FROM iuw_schema_migrations WHERE id = ?",
+      [id],
+    );
+    if (existing[0]) continue;
+
+    const sql = await readFile(path.join(migrationsDir, file), "utf8");
+    for (const statement of splitStatements(sql)) {
+      await conn.query(statement);
+    }
+    await conn.execute("INSERT IGNORE INTO iuw_schema_migrations (id) VALUES (?)", [id]);
+    console.log(`Applied ${id}`);
+  }
+}
+
+async function migrateUrl(url: string, label: string): Promise<void> {
+  const conn = await mysql.createConnection(parseDatabaseUrl(url, config.DATABASE_SSL));
+  try {
+    await applyFileMigrations(conn);
+    const repaired = await ensureLiveSchemaOnConnection(conn);
+    if (repaired.length) {
+      console.log(`Repaired missing schema on ${label}: ${repaired.join(", ")}`);
+    } else {
+      console.log(`Schema already complete on ${label}.`);
+    }
+  } finally {
+    await conn.end();
+  }
+}
+
+async function main() {
+  const migrateUrlValue = config.DATABASE_MIGRATE_URL || config.DATABASE_URL;
+
+  if (process.argv.includes("--down")) {
+    const conn = await mysql.createConnection(parseDatabaseUrl(migrateUrlValue, config.DATABASE_SSL));
+    try {
+      await conn.query(`
+        CREATE TABLE IF NOT EXISTS iuw_schema_migrations (
+          id VARCHAR(128) NOT NULL PRIMARY KEY,
+          applied_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+      `);
       const [rows] = await conn.query<{ id: string }[] & mysql.RowDataPacket[]>(
         "SELECT id FROM iuw_schema_migrations ORDER BY id DESC LIMIT 1",
       );
@@ -37,32 +85,18 @@ async function main() {
       }
       await conn.execute("DELETE FROM iuw_schema_migrations WHERE id = ?", [latest]);
       console.log(`Reverted ${latest}`);
-      return;
+    } finally {
+      await conn.end();
     }
-
-    const files = (await readdir(migrationsDir))
-      .filter((f) => f.endsWith(".sql") && !f.endsWith(".down.sql"))
-      .sort();
-
-    for (const file of files) {
-      const id = file.replace(/\.sql$/, "");
-      const [existing] = await conn.query<{ id: string }[] & mysql.RowDataPacket[]>(
-        "SELECT id FROM iuw_schema_migrations WHERE id = ?",
-        [id],
-      );
-      if (existing[0]) continue;
-
-      const sql = await readFile(path.join(migrationsDir, file), "utf8");
-      for (const statement of splitStatements(sql)) {
-        await conn.query(statement);
-      }
-      await conn.execute("INSERT IGNORE INTO iuw_schema_migrations (id) VALUES (?)", [id]);
-      console.log(`Applied ${id}`);
-    }
-    console.log("Migrations complete.");
-  } finally {
-    await conn.end();
+    return;
   }
+
+  await migrateUrl(migrateUrlValue, "migrate database");
+  if (config.DATABASE_MIGRATE_URL && databaseKey(config.DATABASE_MIGRATE_URL) !== databaseKey(config.DATABASE_URL)) {
+    console.warn("DATABASE_MIGRATE_URL is not the app database; applying schema to DATABASE_URL as well.");
+    await migrateUrl(config.DATABASE_URL, "app database");
+  }
+  console.log("Migrations complete.");
 }
 
 /**
