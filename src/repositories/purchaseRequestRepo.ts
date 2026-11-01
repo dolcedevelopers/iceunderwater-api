@@ -16,6 +16,7 @@ export type PurchaseRequestRow = RowDataPacket & {
   customer_email: string;
   /** Set when the buyer is itself a company ordering from another company. */
   requester_supplier_id: string | null;
+  target_supplier_id: string | null;
   wc_product_id: number;
   product_name: string;
   qty: number;
@@ -30,6 +31,7 @@ export type PurchaseRequestRow = RowDataPacket & {
   updated_at: Date;
   accepted_at: Date | null;
   paid_at: Date | null;
+  delivery_status?: string | null;
 };
 
 export type PurchaseOfferRow = RowDataPacket & {
@@ -51,6 +53,7 @@ export async function insertPurchaseRequest(row: {
   customer_wp_user_id: number;
   customer_email: string;
   requester_supplier_id: string | null;
+  target_supplier_id: string | null;
   wc_product_id: number;
   product_name: string;
   qty: number;
@@ -60,10 +63,10 @@ export async function insertPurchaseRequest(row: {
   // INTERVAL cannot take a bound parameter on this driver, so the window is inlined after clamping.
   await execute(
     `INSERT INTO iuw_purchase_requests
-      (id, customer_wp_user_id, customer_email, requester_supplier_id,
+      (id, customer_wp_user_id, customer_email, requester_supplier_id, target_supplier_id,
        wc_product_id, product_name, qty, status, expires_at)
      VALUES
-      (:id, :customer_wp_user_id, :customer_email, :requester_supplier_id,
+      (:id, :customer_wp_user_id, :customer_email, :requester_supplier_id, :target_supplier_id,
        :wc_product_id, :product_name, :qty, 'open',
        DATE_ADD(UTC_TIMESTAMP(3), INTERVAL ${windowMinutes} MINUTE))`,
     row,
@@ -93,11 +96,21 @@ export async function resendPurchaseRequest(input: {
   requestId: string;
   qty: number;
   windowMinutes: number;
+  targetSupplierId: string | null;
+  supplierIds: string[];
 }): Promise<PurchaseRequestRow> {
   const windowMinutes = acceptWindowMinutes(input.windowMinutes);
-  await execute(
+  return withTransaction(async (conn) => {
+  const [locked] = await conn.query<PurchaseRequestRow[]>(
+    `SELECT * FROM iuw_purchase_requests WHERE id = ? FOR UPDATE`, [input.requestId],
+  );
+  if (!locked[0] || !["open", "expired"].includes(locked[0].status)) {
+    throw conflict("This request can no longer be changed.");
+  }
+  await conn.query(
     `UPDATE iuw_purchase_requests
         SET qty = :qty,
+            target_supplier_id = :targetSupplierId,
             status = 'open',
             accepted_supplier_id = NULL,
             accepted_at = NULL,
@@ -107,12 +120,20 @@ export async function resendPurchaseRequest(input: {
       WHERE id = :requestId AND status IN ('open', 'expired')`,
     input,
   );
-  await execute(`DELETE FROM iuw_purchase_request_offers WHERE request_id = :requestId`, {
+  await conn.query(`DELETE FROM iuw_purchase_request_offers WHERE request_id = :requestId`, {
     requestId: input.requestId,
   });
-  const updated = await findPurchaseRequestById(input.requestId);
-  if (!updated) throw notFound("That request is not available.");
-  return updated;
+  for (const supplierId of input.supplierIds) {
+    await conn.execute(
+      `INSERT INTO iuw_purchase_request_offers (request_id, supplier_id, status) VALUES (?, ?, 'notified')`,
+      [input.requestId, supplierId],
+    );
+  }
+  const [updated] = await conn.query<PurchaseRequestRow[]>(
+    `SELECT * FROM iuw_purchase_requests WHERE id = ?`, [input.requestId],
+  );
+  return updated[0]!;
+  });
 }
 
 export async function insertPurchaseOffers(requestId: string, supplierIds: string[]): Promise<void> {
@@ -127,7 +148,10 @@ export async function insertPurchaseOffers(requestId: string, supplierIds: strin
 
 export async function findPurchaseRequestById(id: string): Promise<PurchaseRequestRow | null> {
   const rows = await query<PurchaseRequestRow[]>(
-    `SELECT * FROM iuw_purchase_requests WHERE id = :id LIMIT 1`,
+    `SELECT r.*, (SELECT d.status FROM iuw_deliveries d
+       WHERE d.wc_order_id = r.woo_order_id AND d.supplier_id = r.accepted_supplier_id
+         AND d.deleted_at IS NULL ORDER BY d.assigned_at DESC LIMIT 1) AS delivery_status
+     FROM iuw_purchase_requests r WHERE id = :id LIMIT 1`,
     { id },
   );
   return rows[0] || null;
@@ -161,7 +185,10 @@ export async function listPurchaseRequests(filter: {
     params.supplierId = filter.supplierId;
   }
   return query<PurchaseRequestRow[]>(
-    `SELECT * FROM iuw_purchase_requests WHERE ${clauses.join(" AND ")} ORDER BY created_at DESC`,
+    `SELECT r.*, (SELECT d.status FROM iuw_deliveries d
+       WHERE d.wc_order_id = r.woo_order_id AND d.supplier_id = r.accepted_supplier_id
+         AND d.deleted_at IS NULL ORDER BY d.assigned_at DESC LIMIT 1) AS delivery_status
+     FROM iuw_purchase_requests r WHERE ${clauses.join(" AND ")} ORDER BY created_at DESC`,
     params,
   );
 }
@@ -169,7 +196,7 @@ export async function listPurchaseRequests(filter: {
 export async function acceptPurchaseRequest(
   requestId: string,
   supplierId: string,
-  checkoutUrl: string,
+  checkoutUrlFor: (row: PurchaseRequestRow) => string,
 ): Promise<PurchaseRequestRow> {
   return withTransaction(async (conn) => {
     // Expiry is evaluated by the database so it cannot drift with server clocks.
@@ -196,12 +223,19 @@ export async function acceptPurchaseRequest(
       [requestId, supplierId],
     );
     if (!offers[0]) throw notFound("You were not offered this request.");
+    const [suppliers] = await conn.query<RowDataPacket[]>(
+      `SELECT id FROM iuw_suppliers WHERE id = ? AND status = 'active' AND deleted_at IS NULL FOR UPDATE`,
+      [supplierId],
+    );
+    if (!suppliers[0] || (row.target_supplier_id && row.target_supplier_id !== supplierId)) {
+      throw conflict("This supplier cannot accept this request.");
+    }
 
     await conn.query(
       `UPDATE iuw_purchase_requests
        SET status = 'accepted', accepted_supplier_id = ?, checkout_url = ?, accepted_at = UTC_TIMESTAMP(3)
        WHERE id = ? AND status = 'open'`,
-      [supplierId, checkoutUrl, requestId],
+      [supplierId, checkoutUrlFor(row), requestId],
     );
     await conn.query(
       `UPDATE iuw_purchase_request_offers SET status = 'accepted' WHERE request_id = ? AND supplier_id = ?`,
@@ -232,7 +266,8 @@ export async function markPurchaseRequestPaid(input: {
      SET status = 'paid', woo_order_id = :wooOrderId, woo_order_number = :wooOrderNumber, paid_at = UTC_TIMESTAMP(3)
      WHERE id = :requestId
        AND customer_wp_user_id = :customerWpUserId
-       AND status IN ('accepted', 'checkout_started', 'open', 'expired')`,
+       AND accepted_supplier_id IS NOT NULL
+       AND status IN ('accepted', 'checkout_started')`,
     input,
   );
   return Boolean(result.affectedRows);

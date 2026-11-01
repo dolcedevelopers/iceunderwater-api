@@ -476,7 +476,7 @@ function iuw_bridge_user_payload( WP_User $user ) {
  * Accept-then-pay: stash iuw_request_id from the checkout URL onto the Woo order
  * so the API webhook can match order + customer + request.
  */
-add_action( 'init', 'iuw_bridge_capture_request_id' );
+add_action( 'wp_loaded', 'iuw_bridge_capture_request_id', 15 );
 function iuw_bridge_capture_request_id() {
 	if ( empty( $_GET['iuw_request_id'] ) ) {
 		return;
@@ -488,10 +488,30 @@ function iuw_bridge_capture_request_id() {
 	if ( ! function_exists( 'WC' ) || ! WC()->session ) {
 		return;
 	}
+	$row = iuw_bridge_accepted_request( $request_id );
+	if ( ! $row || ! is_user_logged_in() || (int) $row->customer_wp_user_id !== get_current_user_id() ) {
+		wp_die( esc_html__( 'Please sign in with the account that placed this accepted request.', 'iuw' ), '', array( 'response' => 403 ) );
+	}
+	if ( isset( $_GET['add-to-cart'] ) && ( (int) $_GET['add-to-cart'] !== (int) $row->wc_product_id || (int) ( $_GET['quantity'] ?? 1 ) !== (int) $row->qty ) ) {
+		wp_die( esc_html__( 'The checkout items must match your accepted request.', 'iuw' ), '', array( 'response' => 400 ) );
+	}
+	if ( WC()->cart && isset( $_GET['add-to-cart'] ) ) {
+		WC()->cart->empty_cart();
+	}
 	WC()->session->set( 'iuw_request_id', $request_id );
 }
 
+function iuw_bridge_accepted_request( $request_id ) {
+	global $wpdb;
+	return $wpdb->get_row( $wpdb->prepare(
+		"SELECT r.* FROM iuw_purchase_requests r INNER JOIN iuw_suppliers s ON s.id = r.accepted_supplier_id
+		 WHERE r.id = %s AND r.status IN ('accepted', 'checkout_started')
+		 AND s.status = 'active' AND s.deleted_at IS NULL LIMIT 1", $request_id
+	) );
+}
+
 add_action( 'woocommerce_checkout_create_order', 'iuw_bridge_attach_request_id_to_order', 20, 2 );
+add_action( 'woocommerce_store_api_checkout_update_order_from_request', 'iuw_bridge_attach_request_id_to_order', 20, 2 );
 function iuw_bridge_attach_request_id_to_order( $order, $data ) {
 	$request_id = '';
 	if ( function_exists( 'WC' ) && WC()->session ) {
@@ -503,5 +523,19 @@ function iuw_bridge_attach_request_id_to_order( $order, $data ) {
 	if ( $request_id === '' ) {
 		return;
 	}
+	$row = iuw_bridge_accepted_request( $request_id );
+	$items = array_values( $order->get_items() );
+	if ( ! $row || ! is_user_logged_in() || get_current_user_id() !== (int) $row->customer_wp_user_id
+		|| count( $items ) !== 1 || (int) $items[0]->get_product_id() !== (int) $row->wc_product_id
+		|| (int) $items[0]->get_quantity() !== (int) $row->qty ) {
+		throw new Exception( 'Your order must match an accepted request before payment.' );
+	}
 	$order->update_meta_data( 'iuw_request_id', $request_id );
+	$order->update_meta_data( 'iuw_supplier_id', $row->accepted_supplier_id );
 }
+
+add_action( 'woocommerce_checkout_order_processed', function () {
+	if ( function_exists( 'WC' ) && WC()->session ) {
+		WC()->session->__unset( 'iuw_request_id' );
+	}
+} );

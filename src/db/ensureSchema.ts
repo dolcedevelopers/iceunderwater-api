@@ -68,6 +68,7 @@ export async function ensureLiveSchemaOnConnection(conn: SchemaConn): Promise<st
   await addColumn(conn, "iuw_suppliers", "address", "VARCHAR(512) NOT NULL DEFAULT ''", applied);
 
   await addColumn(conn, "iuw_purchase_requests", "requester_supplier_id", "VARCHAR(64) NULL", applied);
+  await addColumn(conn, "iuw_purchase_requests", "target_supplier_id", "VARCHAR(64) NULL", applied);
   await addColumn(conn, "iuw_purchase_requests", "expires_at", "DATETIME(3) NULL", applied);
   await addColumn(
     conn,

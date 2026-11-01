@@ -25,6 +25,7 @@ import {
   updateDriver,
 } from "../repositories/driverRepo.js";
 import { findActiveDeliveryForDriverCustomer, findDeliveryById, insertDelivery, listDeliveries, updateDeliveryStatus } from "../repositories/deliveryRepo.js";
+import { findTransactionByOrderId } from "../repositories/transactionRepo.js";
 
 export async function listDriversFor(session: SessionLike, supplierId?: string) {
   const scope = resolveSupplierScope(session, supplierId);
@@ -193,13 +194,18 @@ export async function assignDelivery(
   requireRole(session, ROLES.ADMIN, ROLES.SUPPLIER);
   const driver = await findDriverById(data.driverId);
   assertOwnsRecord(session, driver ? { supplierId: driver.supplier_id } : null, "driver");
+  const transaction = await findTransactionByOrderId(data.orderId);
+  if (!transaction || transaction.supplier_id !== driver!.supplier_id) {
+    throw accessDenied("That order is not available for this supplier.");
+  }
+  if (transaction.status !== "paid") throw validationError("Payment must be confirmed before delivery is assigned.");
   const delivery = await insertDelivery({
     id: makeId("del"),
     supplier_id: driver!.supplier_id,
     driver_id: driver!.id,
     wc_order_id: data.orderId,
-    customer_wp_user_id: data.customerWpUserId ?? null,
-    customer_email: normalizeEmail(data.customerEmail || ""),
+    customer_wp_user_id: transaction.customer_wp_user_id,
+    customer_email: transaction.customer_email,
   });
   await updateDriver(driver!.id, { status: "on-delivery" });
   await writeAudit({

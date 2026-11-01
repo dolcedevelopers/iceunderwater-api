@@ -6,6 +6,7 @@ import {
   createPurchaseRequestFor,
   getPurchaseRequestFor,
   listPurchaseRequestsFor,
+  listPurchaseSuppliersFor,
   resendPurchaseRequestFor,
   startCheckoutFor,
 } from "../services/purchaseRequestService.js";
@@ -15,10 +16,12 @@ const createSchema = z
     wcProductId: z.coerce.number().int().positive(),
     qty: z.coerce.number().int().positive().optional(),
     productName: z.string().optional(),
+    targetSupplierId: z.string().trim().min(1).max(64).nullable().optional(),
   })
   .strict();
 
 const purchaseRequestRoutes: FastifyPluginAsync = async (app) => {
+  app.get("/purchase-requests/suppliers", async (request) => listPurchaseSuppliersFor(requireAuth(request)));
   app.get("/purchase-requests", async (request) => listPurchaseRequestsFor(requireAuth(request)));
 
   app.post("/purchase-requests", async (request) => {
@@ -39,7 +42,10 @@ const purchaseRequestRoutes: FastifyPluginAsync = async (app) => {
   );
 
   app.post<{ Params: { id: string } }>("/purchase-requests/:id/resend", async (request) => {
-    const body = z.object({ qty: z.coerce.number().int().positive().optional() }).strict().parse(request.body ?? {});
+    const body = z.object({
+      qty: z.coerce.number().int().positive().optional(),
+      targetSupplierId: z.string().trim().min(1).max(64).nullable().optional(),
+    }).strict().parse(request.body ?? {});
     return resendPurchaseRequestFor(requireAuth(request), request.params.id, body, request.ip);
   });
 };

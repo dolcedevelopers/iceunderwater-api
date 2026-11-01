@@ -32,6 +32,7 @@ import {
 import { createWcRefund, updateWcOrderStatus } from "../clients/woocommerce.js";
 import { sendWcInvoice } from "../clients/wordpress.js";
 import { execute } from "../db/pool.js";
+import { findPurchaseRequestById } from "../repositories/purchaseRequestRepo.js";
 
 export function mapWooStatus(status: string | undefined | null): "paid" | "pending" | "refunded" | "failed" {
   const s = String(status || "pending").replace(/^wc-/, "");
@@ -240,13 +241,25 @@ export async function syncWooOrder(order: {
   }
 
   const lines = Array.isArray(order.line_items) ? order.line_items : [];
+  const requestId = String(order.meta_data?.find((item) => item.key === "iuw_request_id")?.value || "").trim();
+  const purchaseRequest = requestId ? await findPurchaseRequestById(requestId) : null;
+  if (requestId) {
+    if (!purchaseRequest?.accepted_supplier_id || !["accepted", "checkout_started", "paid"].includes(purchaseRequest.status)
+      || (purchaseRequest.woo_order_id && Number(purchaseRequest.woo_order_id) !== orderId)
+      || (Number(order.customer_id) !== Number(purchaseRequest.customer_wp_user_id)
+        && normalizeEmail(order.billing?.email || "") !== normalizeEmail(purchaseRequest.customer_email))
+      || lines.length !== 1 || Number(lines[0]?.product_id) !== Number(purchaseRequest.wc_product_id)
+      || Number(lines[0]?.quantity) !== Number(purchaseRequest.qty)) {
+      throw validationError("Order does not match an accepted purchase request.");
+    }
+  }
   const enriched = [];
   for (const line of lines) {
     const productId = Number(line.product_id);
     const owner = Number.isFinite(productId) ? await findProductOwner(productId) : null;
     enriched.push({
       wc_product_id: Number.isFinite(productId) ? productId : null,
-      supplier_id: owner?.supplier_id || "",
+      supplier_id: purchaseRequest?.accepted_supplier_id || owner?.supplier_id || "",
       name: String(line.name || "Item"),
       quantity: Number(line.quantity) || 0,
       line_total_cents: randsToCents(Number(line.total) || 0),
@@ -306,6 +319,7 @@ export async function syncWooOrder(order: {
           customerEmail: normalizeEmail(order.billing?.email || ""),
           wooOrderId: orderId,
           wooOrderNumber: String(order.number || orderId),
+          lineItems: lines,
         });
       } catch {
         // Do not fail webhook sync if purchase-request tables are missing/out of date.

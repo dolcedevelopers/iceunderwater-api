@@ -15,7 +15,7 @@ import { accessDenied, notFound, validationError } from "../lib/errors.js";
 import { config } from "../config.js";
 import { makeId, normalizeEmail } from "../lib/ids.js";
 import { writeAudit } from "../repositories/auditRepo.js";
-import { findProductOwner, listSupplierIdsForProductCategory } from "../repositories/productRepo.js";
+import { listSuppliers } from "../repositories/supplierRepo.js";
 import { insertNotification } from "../repositories/notificationRepo.js";
 import {
   acceptPurchaseRequest,
@@ -42,11 +42,13 @@ function mapRequest(row: PurchaseRequestRow, options: { includeCheckoutUrl?: boo
     customerWpUserId: Number(row.customer_wp_user_id),
     customerEmail: row.customer_email,
     requesterSupplierId: row.requester_supplier_id || null,
+    targetSupplierId: row.target_supplier_id || null,
     requesterKind: row.requester_supplier_id ? ("company" as const) : ("customer" as const),
     wcProductId: Number(row.wc_product_id),
     productName: row.product_name,
     qty: Number(row.qty),
     status: row.status,
+    deliveryStatus: row.delivery_status || null,
     acceptedSupplierId: row.accepted_supplier_id || null,
     wooOrderId: row.woo_order_id != null ? Number(row.woo_order_id) : null,
     wooOrderNumber: row.woo_order_number || null,
@@ -89,24 +91,6 @@ function buildCheckoutUrl(wcProductId: number, qty: number, requestId: string): 
   return `${base}/checkout/?${params.toString()}`;
 }
 
-/**
- * Who should see this request: the company that owns the product, plus any
- * company stocking the same category. Never every company on the platform —
- * a clothing seller should not be pinged about ice.
- */
-async function suppliersForProduct(wcProductId: number): Promise<string[]> {
-  const ids = new Set<string>();
-
-  const owner = await findProductOwner(wcProductId);
-  if (owner?.supplier_id) ids.add(owner.supplier_id);
-
-  for (const supplierId of await listSupplierIdsForProductCategory(wcProductId)) {
-    ids.add(supplierId);
-  }
-
-  return [...ids];
-}
-
 function includeCheckoutUrl(session: SessionLike, row: PurchaseRequestRow): boolean {
   if (isAdmin(session)) return false;
   if (isSupplier(session)) {
@@ -122,8 +106,30 @@ function buyerLabel(requesterSupplierId: string | null): string {
   return requesterSupplierId ? "A company" : "A customer";
 }
 
-async function targetsForProduct(wcProductId: number, excludeSupplierId: string | null): Promise<string[]> {
-  return (await suppliersForProduct(wcProductId)).filter((id) => id !== excludeSupplierId);
+export async function listPurchaseSuppliersFor(session: SessionLike) {
+  const requester = requesterOf(session);
+  const [suppliers, history] = await Promise.all([
+    listSuppliers({ status: "active" }),
+    listPurchaseRequests(requester.supplierId
+      ? { supplierId: requester.supplierId }
+      : { customerWpUserId: requester.principal.wpUserId }),
+  ]);
+  const previous = new Set(history.filter((row) => ownsRequest(row, requester) && row.status === "paid")
+    .map((row) => row.accepted_supplier_id));
+  return suppliers.filter((row) => row.id !== requester.supplierId).map((row) => ({
+    id: row.id, name: row.name, city: row.city, previous: previous.has(row.id),
+  }));
+}
+
+async function targetsForSelection(session: SessionLike, targetSupplierId?: string | null): Promise<string[]> {
+  const suppliers = await listPurchaseSuppliersFor(session);
+  if (targetSupplierId) {
+    if (!suppliers.some((row) => row.id === targetSupplierId)) {
+      throw validationError("Choose an available supplier other than your own company.");
+    }
+    return [targetSupplierId];
+  }
+  return suppliers.map((row) => row.id);
 }
 
 async function notifySuppliers(input: {
@@ -148,7 +154,7 @@ async function notifySuppliers(input: {
 
 export async function createPurchaseRequestFor(
   session: SessionLike,
-  data: { wcProductId: number; qty?: number; productName?: string },
+  data: { wcProductId: number; qty?: number; productName?: string; targetSupplierId?: string | null },
   ip?: string,
 ) {
   const requester = requesterOf(session);
@@ -167,7 +173,7 @@ export async function createPurchaseRequestFor(
     productName = productName || `Product #${wcProductId}`;
   }
 
-  const supplierIds = await targetsForProduct(wcProductId, requester.supplierId);
+  const supplierIds = await targetsForSelection(session, data.targetSupplierId);
   if (!supplierIds.length) {
     throw validationError(
       requester.supplierId
@@ -182,6 +188,7 @@ export async function createPurchaseRequestFor(
     customer_wp_user_id: requester.principal.wpUserId,
     customer_email: normalizeEmail(requester.principal.email),
     requester_supplier_id: requester.supplierId,
+    target_supplier_id: data.targetSupplierId || null,
     wc_product_id: wcProductId,
     product_name: productName,
     qty,
@@ -257,8 +264,9 @@ export async function acceptPurchaseRequestFor(session: SessionLike, id: string,
   if (row.requester_supplier_id && row.requester_supplier_id === scope) {
     throw accessDenied("You cannot accept your own order.");
   }
-  const checkoutUrl = buildCheckoutUrl(Number(row.wc_product_id), Number(row.qty), row.id);
-  const accepted = await acceptPurchaseRequest(id, scope, checkoutUrl);
+  const accepted = await acceptPurchaseRequest(id, scope, (current) =>
+    buildCheckoutUrl(Number(current.wc_product_id), Number(current.qty), current.id),
+  );
 
   await insertNotification({
     recipientKind: "wp",
@@ -288,7 +296,7 @@ export async function startCheckoutFor(session: SessionLike, id: string) {
   const row = await findPurchaseRequestById(id);
   if (!row) throw notFound("That request is not available.");
   if (!ownsRequest(row, requester)) throw accessDenied();
-  if (row.status !== "accepted" && row.status !== "checkout_started") {
+  if (!row.accepted_supplier_id || (row.status !== "accepted" && row.status !== "checkout_started")) {
     throw validationError("Wait for a company to accept before paying.");
   }
   await markCheckoutStarted(id);
@@ -298,7 +306,7 @@ export async function startCheckoutFor(session: SessionLike, id: string) {
 export async function resendPurchaseRequestFor(
   session: SessionLike,
   id: string,
-  data: { qty?: number } = {},
+  data: { qty?: number; targetSupplierId?: string | null } = {},
   ip?: string,
 ) {
   const requester = requesterOf(session);
@@ -311,7 +319,8 @@ export async function resendPurchaseRequestFor(
   }
 
   const qty = Math.max(1, Math.floor(Number(data.qty) || Number(row.qty) || 1));
-  const supplierIds = await targetsForProduct(Number(row.wc_product_id), requester.supplierId);
+  const targetSupplierId = data.targetSupplierId === undefined ? row.target_supplier_id : data.targetSupplierId;
+  const supplierIds = await targetsForSelection(session, targetSupplierId);
   if (!supplierIds.length) {
     throw validationError(
       requester.supplierId
@@ -324,8 +333,9 @@ export async function resendPurchaseRequestFor(
     requestId: id,
     qty,
     windowMinutes: PURCHASE_REQUEST_ACCEPT_WINDOW_MINUTES,
+    targetSupplierId: targetSupplierId || null,
+    supplierIds,
   });
-  await insertPurchaseOffers(id, supplierIds);
   await notifySuppliers({
     requestId: id,
     supplierIds,
@@ -357,9 +367,17 @@ export async function fulfillPurchaseRequestFromOrder(input: {
   customerEmail: string;
   wooOrderId: number;
   wooOrderNumber: string;
+  lineItems: { product_id: number; quantity: number }[];
 }): Promise<{ ok: boolean; reason?: string }> {
   const row = await findPurchaseRequestById(input.requestId);
   if (!row) return { ok: false, reason: "request_not_found" };
+  if (!["accepted", "checkout_started"].includes(row.status) || !row.accepted_supplier_id) {
+    return { ok: false, reason: "request_not_accepted" };
+  }
+  if (input.lineItems.length !== 1 || Number(input.lineItems[0]?.product_id) !== Number(row.wc_product_id)
+    || Number(input.lineItems[0]?.quantity) !== Number(row.qty)) {
+    return { ok: false, reason: "items_mismatch" };
+  }
 
   const emailMatch =
     normalizeEmail(row.customer_email) &&
