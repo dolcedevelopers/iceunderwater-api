@@ -23,7 +23,7 @@ import {
 } from "../repositories/supplierRepo.js";
 import { listDrivers } from "../repositories/driverRepo.js";
 import { listOwnedProductIds } from "../repositories/productRepo.js";
-import { listTransactions, supplierSettlement } from "../repositories/transactionRepo.js";
+import { supplierSettlement } from "../repositories/transactionRepo.js";
 import { createWpUserViaBridge } from "../clients/wordpress.js";
 import { uploadImageBuffer } from "./mediaService.js";
 import { repriceSupplierProducts } from "./productService.js";
@@ -316,20 +316,19 @@ export async function uploadSupplierLogo(
 
 export async function supplierOverview(session: SessionLike, supplierId: string) {
   const scope = resolveSupplierScope(session, supplierId);
-  const [products, drivers, transactions] = await Promise.all([
+  const [products, drivers, settlement] = await Promise.all([
     listOwnedProductIds(scope),
     listDrivers(scope),
-    listTransactions({ supplierId: scope }),
+    supplierSettlement(scope!),
   ]);
-  const paid = transactions.filter((t) => t.status === "paid");
   return {
     productCount: products.length,
     activeProducts: products.length,
     outOfStock: 0,
     driverCount: drivers.length,
     availableDrivers: drivers.filter((d) => d.status === "available").length,
-    orderCount: transactions.length,
-    revenue: centsToRands(paid.reduce((sum, t) => sum + t.total_cents, 0)),
+    orderCount: settlement.orderCount,
+    revenue: centsToRands(settlement.paidCents),
   };
 }
 

@@ -17,6 +17,8 @@ export type TransactionRow = RowDataPacket & {
   created_at: Date;
   receipt_sent_at: Date | null;
   deleted_at: Date | null;
+  transaction_type?: "sale" | "purchase";
+  line_items?: { productId: number | null; name: string; quantity: number; totalCents: number }[];
 };
 
 export type TransactionLineRow = RowDataPacket & {
@@ -89,6 +91,54 @@ export async function listTransactions(filter: {
     `SELECT * FROM iuw_transactions WHERE ${clauses.join(" AND ")} ORDER BY created_at DESC`,
     params,
   );
+}
+
+/** Every field is scoped before serialization; other sellers' lines and amounts never leave the API. */
+export async function listCompanyTransactions(scope: {
+  supplierId: string;
+  wpUserId: number;
+  reference?: string;
+  id?: string;
+}): Promise<TransactionRow[]> {
+  const buyer = "t.customer_wp_user_id = :wpUserId";
+  const rows = await query<TransactionRow[]>(
+    `SELECT t.id, t.wc_order_id, t.reference, t.customer_wp_user_id,
+      t.customer_name, t.customer_email,
+      CASE WHEN ${buyer} THEN t.supplier_id ELSE :supplierId END AS supplier_id,
+      CASE WHEN ${buyer} THEN t.supplier_name ELSE s.name END AS supplier_name,
+      CASE WHEN ${buyer} THEN t.items ELSE own.items END AS items,
+      CASE WHEN ${buyer} THEN t.total_cents ELSE own.total_cents END AS total_cents,
+      t.status, t.method, t.created_at, t.receipt_sent_at, t.deleted_at,
+      CASE WHEN ${buyer} THEN 'purchase' ELSE 'sale' END AS transaction_type
+     FROM iuw_transactions t
+     LEFT JOIN (
+       SELECT transaction_id, SUM(quantity) AS items, SUM(line_total_cents) AS total_cents
+       FROM iuw_transaction_lines WHERE supplier_id = :supplierId GROUP BY transaction_id
+     ) own ON own.transaction_id = t.id
+     LEFT JOIN iuw_suppliers s ON s.id = :supplierId
+     WHERE t.deleted_at IS NULL AND (${buyer} OR own.transaction_id IS NOT NULL)
+       ${scope.reference ? "AND t.reference = :reference" : ""}
+       ${scope.id ? "AND t.id = :id" : ""}
+     ORDER BY t.created_at DESC`,
+    scope,
+  );
+  if (!rows.length) return [];
+  const lines = await query<(RowDataPacket & {
+    transaction_id: string; wc_product_id: number | null; name: string; quantity: number; line_total_cents: number;
+  })[]>(
+    `SELECT l.transaction_id, l.wc_product_id, l.name, l.quantity, l.line_total_cents
+     FROM iuw_transaction_lines l JOIN iuw_transactions t ON t.id = l.transaction_id
+     WHERE t.deleted_at IS NULL AND (${buyer} OR l.supplier_id = :supplierId)
+       ${scope.reference ? "AND t.reference = :reference" : ""}
+       ${scope.id ? "AND t.id = :id" : ""}
+     ORDER BY l.id`,
+    scope,
+  );
+  return rows.map((row) => ({ ...row, items: Number(row.items), total_cents: Number(row.total_cents),
+    line_items: lines.filter((line) => line.transaction_id === row.id).map((line) => ({
+      productId: line.wc_product_id, name: line.name, quantity: Number(line.quantity), totalCents: Number(line.line_total_cents),
+    })),
+  }));
 }
 
 export async function upsertTransaction(row: {

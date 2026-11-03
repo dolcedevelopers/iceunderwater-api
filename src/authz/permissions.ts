@@ -104,7 +104,8 @@ export function assertOwnsRecord<T extends OwnedRecord>(session: SessionLike, re
 export function canAccessTransaction(session: SessionLike, transaction: TransactionAccess): boolean {
   if (!transaction) return false;
   if (isAdmin(session)) return true;
-  if (isSupplier(session)) return transaction.supplierId === session?.supplierId;
+  if (isSupplier(session)) return Boolean(session?.supplierId) && (transaction.supplierId === session?.supplierId
+    || (transaction.customerId != null && String(transaction.customerId) === String(session?.wpUserId)));
   if (isCustomer(session)) {
     const email = identityEmail(session);
     if (!email) return false;

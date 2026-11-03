@@ -1,6 +1,6 @@
 # Purchase requests
 
-The app uses `https://iceunderwater-api.onrender.com`. Original API repository:
+The app uses `https://iceunderwater-api-awia.onrender.com`. Original API repository:
 `C:/Users/calvi/Desktop/iceunderwater` (`dolcedevelopers/iceunderwater-api`).
 This folder is a working copy used to prepare and test the update.
 

@@ -24,6 +24,7 @@ import {
   findTransactionByReference,
   insertTransactionLines,
   listTransactions,
+  listCompanyTransactions,
   markReceiptSent,
   updateTransactionStatus,
   upsertTransaction,
@@ -98,7 +99,7 @@ export async function listTransactionsFor(
 
   if (isSupplier(session)) {
     const scope = resolveSupplierScope(session, opts.supplierId);
-    const rows = await listTransactions({ supplierId: scope, reference: opts.reference });
+    const rows = await listCompanyTransactions({ supplierId: scope!, wpUserId: session!.wpUserId, reference: opts.reference });
     return toInvoices(rows);
   }
 
@@ -123,6 +124,11 @@ export async function listTransactionsFor(
 
 export async function getTransactionFor(session: SessionLike, id: string) {
   requireSignedIn(session);
+  if (isSupplier(session)) {
+    const rows = await listCompanyTransactions({ supplierId: resolveSupplierScope(session)!, wpUserId: session!.wpUserId, id });
+    if (!rows[0]) throw accessDenied("That receipt is not available.");
+    return toInvoice(rows[0]);
+  }
   const row = await findTransactionById(id);
   requireTransactionAccess(session, row ? {
     supplierId: row.supplier_id,
@@ -170,8 +176,11 @@ export async function updateTransactionFor(
 
 export async function sendReceiptFor(session: SessionLike, id: string, ip?: string) {
   requireSignedIn(session);
+  // Reuse the same scoped lookup as the list/detail/invoice routes before any email side effect.
+  if (isSupplier(session)) await getTransactionFor(session, id);
   const existing = await findTransactionById(id);
-  requireTransactionAccess(session, existing ? {
+  if (!existing) throw accessDenied("That receipt is not available.");
+  if (!isSupplier(session)) requireTransactionAccess(session, existing ? {
     supplierId: existing.supplier_id,
     customerEmail: existing.customer_email,
     customerId: existing.customer_wp_user_id,
