@@ -14,6 +14,7 @@ import {
 
 const createSchema = z
   .object({
+    deliveryAt: z.string().datetime({ offset: true }),
     wcProductId: z.coerce.number().int().positive(),
     qty: z.coerce.number().int().positive().optional(),
     productName: z.string().optional(),
@@ -45,6 +46,7 @@ const purchaseRequestRoutes: FastifyPluginAsync = async (app) => {
 
   app.post<{ Params: { id: string } }>("/purchase-requests/:id/resend", async (request) => {
     const body = z.object({
+      deliveryAt: z.string().datetime({ offset: true }).optional(),
       qty: z.coerce.number().int().positive().optional(),
       targetSupplierId: z.string().trim().min(1).max(64).nullable().optional(),
     }).strict().parse(request.body ?? {});

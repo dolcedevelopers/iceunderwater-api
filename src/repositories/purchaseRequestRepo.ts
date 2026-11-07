@@ -32,6 +32,7 @@ export type PurchaseRequestRow = RowDataPacket & {
   accepted_at: Date | null;
   paid_at: Date | null;
   delivery_status?: string | null;
+  delivery_at?: Date | null;
 };
 
 export type PurchaseOfferRow = RowDataPacket & {
@@ -58,17 +59,18 @@ export async function insertPurchaseRequest(row: {
   product_name: string;
   qty: number;
   window_minutes: number;
+  delivery_at: Date;
 }): Promise<PurchaseRequestRow> {
   const windowMinutes = acceptWindowMinutes(row.window_minutes);
   // INTERVAL cannot take a bound parameter on this driver, so the window is inlined after clamping.
   await execute(
     `INSERT INTO iuw_purchase_requests
       (id, customer_wp_user_id, customer_email, requester_supplier_id, target_supplier_id,
-       wc_product_id, product_name, qty, status, expires_at)
+       wc_product_id, product_name, qty, delivery_at, status, expires_at)
      VALUES
       (:id, :customer_wp_user_id, :customer_email, :requester_supplier_id, :target_supplier_id,
-       :wc_product_id, :product_name, :qty, 'open',
-       DATE_ADD(UTC_TIMESTAMP(3), INTERVAL ${windowMinutes} MINUTE))`,
+       :wc_product_id, :product_name, :qty, :delivery_at, 'open',
+       LEAST(:delivery_at, DATE_ADD(UTC_TIMESTAMP(3), INTERVAL ${windowMinutes} MINUTE)))`,
     row,
   );
   const created = await findPurchaseRequestById(row.id);
@@ -96,6 +98,7 @@ export async function resendPurchaseRequest(input: {
   requestId: string;
   qty: number;
   windowMinutes: number;
+  deliveryAt: Date;
   targetSupplierId: string | null;
   supplierIds: string[];
 }): Promise<PurchaseRequestRow> {
@@ -110,13 +113,14 @@ export async function resendPurchaseRequest(input: {
   await conn.query(
     `UPDATE iuw_purchase_requests
         SET qty = :qty,
+            delivery_at = :deliveryAt,
             target_supplier_id = :targetSupplierId,
             status = 'open',
             accepted_supplier_id = NULL,
             accepted_at = NULL,
             checkout_url = '',
             resend_count = resend_count + 1,
-            expires_at = DATE_ADD(UTC_TIMESTAMP(3), INTERVAL ${windowMinutes} MINUTE)
+            expires_at = LEAST(:deliveryAt, DATE_ADD(UTC_TIMESTAMP(3), INTERVAL ${windowMinutes} MINUTE))
       WHERE id = :requestId AND status IN ('open', 'expired')`,
     input,
   );

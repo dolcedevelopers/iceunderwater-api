@@ -36,6 +36,15 @@ import { getWcProduct } from "../clients/woocommerce.js";
  * paid, so it is stripped for every audience except the account that raised
  * the request — including when that account is itself a company.
  */
+export function validateDeliveryAt(value: unknown): Date {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T.*(?:Z|[+-]\d{2}:\d{2})$/.test(value)) throw validationError("Choose a delivery date and time.");
+  const [year, month, day] = value.slice(0, 10).split("-").map(Number);
+  if (month! < 1 || month! > 12 || day! < 1 || day! > new Date(Date.UTC(year!, month!, 0)).getUTCDate()) throw validationError("Choose a valid delivery date.");
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime()) || date.getTime() <= Date.now()) throw validationError("Choose a delivery date and time in the future.");
+  return date;
+}
+
 function mapRequest(row: PurchaseRequestRow, options: { includeCheckoutUrl?: boolean } = {}) {
   return {
     id: row.id,
@@ -49,6 +58,8 @@ function mapRequest(row: PurchaseRequestRow, options: { includeCheckoutUrl?: boo
     qty: Number(row.qty),
     status: row.status,
     deliveryStatus: row.delivery_status || null,
+    deliveryAt: row.delivery_at ? new Date(row.delivery_at).toISOString() : null,
+    deliveryTimezone: "Africa/Johannesburg",
     acceptedSupplierId: row.accepted_supplier_id || null,
     wooOrderId: row.woo_order_id != null ? Number(row.woo_order_id) : null,
     wooOrderNumber: row.woo_order_number || null,
@@ -138,13 +149,14 @@ async function notifySuppliers(input: {
   qty: number;
   productName: string;
   requesterSupplierId: string | null;
+  deliveryAt: Date;
 }): Promise<void> {
   for (const supplierId of input.supplierIds) {
     await insertNotification({
       recipientKind: "supplier",
       recipientId: supplierId,
       title: "New product request",
-      body: `${buyerLabel(input.requesterSupplierId)} wants ${input.qty} × ${input.productName}. Accept to open checkout.`,
+      body: `${buyerLabel(input.requesterSupplierId)} wants ${input.qty} × ${input.productName}. Delivery requested: ${input.deliveryAt.toLocaleString("en-ZA", { timeZone: "Africa/Johannesburg", dateStyle: "medium", timeStyle: "short" })} SAST. Accept to open checkout.`,
       kind: "purchase_request",
       refType: "purchase_request",
       refId: input.requestId,
@@ -154,10 +166,11 @@ async function notifySuppliers(input: {
 
 export async function createPurchaseRequestFor(
   session: SessionLike,
-  data: { wcProductId: number; qty?: number; productName?: string; targetSupplierId?: string | null },
+  data: { wcProductId: number; qty?: number; productName?: string; targetSupplierId?: string | null; deliveryAt?: string },
   ip?: string,
 ) {
   const requester = requesterOf(session);
+  const deliveryAt = validateDeliveryAt(data.deliveryAt);
 
   const qty = Math.max(1, Math.floor(Number(data.qty) || 1));
   const wcProductId = Number(data.wcProductId);
@@ -193,6 +206,7 @@ export async function createPurchaseRequestFor(
     product_name: productName,
     qty,
     window_minutes: PURCHASE_REQUEST_ACCEPT_WINDOW_MINUTES,
+    delivery_at: deliveryAt,
   });
   await insertPurchaseOffers(id, supplierIds);
   await notifySuppliers({
@@ -201,6 +215,7 @@ export async function createPurchaseRequestFor(
     qty,
     productName,
     requesterSupplierId: requester.supplierId,
+    deliveryAt,
   });
 
   await writeAudit({
@@ -306,7 +321,7 @@ export async function startCheckoutFor(session: SessionLike, id: string) {
 export async function resendPurchaseRequestFor(
   session: SessionLike,
   id: string,
-  data: { qty?: number; targetSupplierId?: string | null } = {},
+  data: { qty?: number; targetSupplierId?: string | null; deliveryAt?: string } = {},
   ip?: string,
 ) {
   const requester = requesterOf(session);
@@ -318,6 +333,7 @@ export async function resendPurchaseRequestFor(
     throw validationError("This request can no longer be changed.");
   }
 
+  const deliveryAt = validateDeliveryAt(data.deliveryAt ?? (row.delivery_at ? new Date(row.delivery_at).toISOString() : undefined));
   const qty = Math.max(1, Math.floor(Number(data.qty) || Number(row.qty) || 1));
   const targetSupplierId = data.targetSupplierId === undefined ? row.target_supplier_id : data.targetSupplierId;
   const supplierIds = await targetsForSelection(session, targetSupplierId);
@@ -333,6 +349,7 @@ export async function resendPurchaseRequestFor(
     requestId: id,
     qty,
     windowMinutes: PURCHASE_REQUEST_ACCEPT_WINDOW_MINUTES,
+    deliveryAt,
     targetSupplierId: targetSupplierId || null,
     supplierIds,
   });
@@ -342,6 +359,7 @@ export async function resendPurchaseRequestFor(
     qty,
     productName: row.product_name,
     requesterSupplierId: requester.supplierId,
+    deliveryAt,
   });
 
   await writeAudit({

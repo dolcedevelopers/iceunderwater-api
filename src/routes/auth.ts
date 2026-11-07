@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { requireAuth } from "../plugins/auth.js";
-import { login, mePayload, register, updateMyPhotos } from "../services/identityService.js";
+import { login, mePayload, register, updateMyPhotos, myProfileFor } from "../services/identityService.js";
 import { revokeRefreshToken, rotateRefreshToken } from "../auth/tokens.js";
 import { authRequired, accessDenied, AppError } from "../lib/errors.js";
 import { config } from "../config.js";
@@ -51,6 +51,7 @@ const photosSchema = z
 const refreshSchema = z.object({ refreshToken: z.string().min(1) }).strict();
 
 const authRoutes: FastifyPluginAsync = async (app) => {
+  app.get("/me/profile", async (request) => myProfileFor(requireAuth(request)));
   app.post("/auth/password", { config: { rateLimit: { max: 5, timeWindow: "1 minute" } } }, async (request) => {
     const principal = requireAuth(request);
     const input = z.object({ currentPassword: z.string().min(1).max(128),

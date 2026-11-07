@@ -264,3 +264,15 @@ export function mePayload(principal: Principal) {
     driverId: principal.driverId || null,
   };
 }
+
+/** Own account only: the subject comes exclusively from the authenticated token. */
+export async function myProfileFor(session: SessionLike) {
+  const principal = requireSignedIn(session);
+  if (!principal.wpUserId) return { name: principal.email, email: principal.email, avatarUrl: "" };
+  const rows = await query<RowDataPacket[]>(
+    `SELECT display_name AS name, user_email AS email,
+      (SELECT meta_value FROM wp_usermeta WHERE user_id = u.ID AND meta_key = 'iuw_avatar_url' ORDER BY umeta_id DESC LIMIT 1) AS avatarUrl
+      FROM wp_users u WHERE u.ID = :id LIMIT 1`, { id: principal.wpUserId });
+  const row = rows[0];
+  return { name: row?.name || principal.email, email: row?.email || principal.email, avatarUrl: row?.avatarUrl || "" };
+}

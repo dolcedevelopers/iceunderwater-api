@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Principal } from "../src/authz/permissions.js";
 import * as requests from "../src/repositories/purchaseRequestRepo.js";
+import { insertNotification } from "../src/repositories/notificationRepo.js";
 import * as suppliers from "../src/repositories/supplierRepo.js";
-import { createPurchaseRequestFor, listPurchaseSuppliersFor, resendPurchaseRequestFor,
+import { createPurchaseRequestFor as createRaw, validateDeliveryAt, listPurchaseSuppliersFor, resendPurchaseRequestFor,
   startCheckoutFor, fulfillPurchaseRequestFromOrder } from "../src/services/purchaseRequestService.js";
 
 vi.mock("../src/repositories/purchaseRequestRepo.js", () => ({
@@ -15,11 +16,13 @@ vi.mock("../src/repositories/auditRepo.js", () => ({ writeAudit: vi.fn() }));
 vi.mock("../src/repositories/notificationRepo.js", () => ({ insertNotification: vi.fn() }));
 vi.mock("../src/clients/woocommerce.js", () => ({ getWcProduct: vi.fn(async () => ({ name: "Water" })) }));
 
+const deliveryAt = new Date(Date.now() + 86400000).toISOString();
+const createPurchaseRequestFor: typeof createRaw = (session, data, ip) => createRaw(session, { deliveryAt, ...data }, ip);
 const customer: Principal = { sub: 1, wpUserId: 1, role: "customer", email: "buyer@example.com" };
 const company: Principal = { ...customer, role: "supplier", supplierId: "own" };
 function row(changes: Record<string, unknown> = {}) {
   return { id: "req", customer_wp_user_id: 1, customer_email: customer.email, requester_supplier_id: null,
-    target_supplier_id: null, wc_product_id: 5, product_name: "Water", qty: 2, status: "open",
+    delivery_at: new Date(deliveryAt), target_supplier_id: null, wc_product_id: 5, product_name: "Water", qty: 2, status: "open",
     accepted_supplier_id: null, checkout_url: "", created_at: new Date(), ...changes } as requests.PurchaseRequestRow;
 }
 
@@ -115,5 +118,39 @@ describe("acceptance before payment", () => {
   it("confirms matching payment only after acceptance", async () => {
     vi.mocked(requests.findPurchaseRequestById).mockResolvedValue(row({ status: "accepted", accepted_supplier_id: "a" }));
     expect((await fulfillPurchaseRequestFromOrder(payment)).ok).toBe(true);
+  });
+});
+
+describe("requested delivery schedule", () => {
+  it.each([undefined, "invalid", "2099-02-30T12:00:00Z", "2020-01-01T12:00:00Z", "2026-12-05T12:00:00"])("rejects missing, invalid, past or ambiguous delivery %s", async (value) => {
+    await expect(createRaw(customer, { wcProductId: 5, deliveryAt: value })).rejects.toThrow();
+    expect(requests.insertPurchaseRequest).not.toHaveBeenCalled();
+  });
+  it("stores a future date as UTC and returns it to the requester", async () => {
+    const result = await createRaw(customer, { wcProductId: 5, deliveryAt });
+    expect(requests.insertPurchaseRequest).toHaveBeenCalledWith(expect.objectContaining({ delivery_at: new Date(deliveryAt) }));
+    expect(result.deliveryAt).toBe(deliveryAt);
+    expect(result.deliveryTimezone).toBe("Africa/Johannesburg");
+    expect(insertNotification).toHaveBeenCalledWith(expect.objectContaining({ body: expect.stringMatching(/Delivery requested: .* SAST/) }));
+    expect(validateDeliveryAt("2099-12-05T12:00:00+02:00").toISOString()).toBe("2099-12-05T10:00:00.000Z");
+  });
+  it("keeps the schedule on resend unless the owner chooses a new one", async () => {
+    await resendPurchaseRequestFor(customer, "req", { qty: 4 });
+    expect(requests.resendPurchaseRequest).toHaveBeenCalledWith(expect.objectContaining({ deliveryAt: new Date(deliveryAt) }));
+    const changed = new Date(Date.now() + 172800000).toISOString();
+    await resendPurchaseRequestFor(customer, "req", { deliveryAt: changed });
+    expect(requests.resendPurchaseRequest).toHaveBeenLastCalledWith(expect.objectContaining({ deliveryAt: new Date(changed) }));
+  });
+  it("requires a new schedule for an old unscheduled request", async () => {
+    vi.mocked(requests.findPurchaseRequestById).mockResolvedValue(row({ delivery_at: null }));
+    await expect(resendPurchaseRequestFor(customer,"req")).rejects.toThrow();
+    expect(requests.resendPurchaseRequest).not.toHaveBeenCalled();
+  });
+  it("cannot alter another buyer's or an accepted request's schedule", async () => {
+    vi.mocked(requests.findPurchaseRequestById).mockResolvedValue(row({ customer_wp_user_id: 2 }));
+    await expect(resendPurchaseRequestFor(customer,"req",{ deliveryAt })).rejects.toThrow();
+    vi.mocked(requests.findPurchaseRequestById).mockResolvedValue(row({ status: "accepted" }));
+    await expect(resendPurchaseRequestFor(customer,"req",{ deliveryAt })).rejects.toThrow();
+    expect(requests.resendPurchaseRequest).not.toHaveBeenCalled();
   });
 });

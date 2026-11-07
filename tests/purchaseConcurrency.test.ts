@@ -22,7 +22,7 @@ it("builds payment from the locked quantity after a concurrent resend", async ()
 it("does not erase offers when an acceptance wins the resend race", async () => {
   connection.query.mockResolvedValueOnce([[{ id: "req", status: "accepted" }]]);
   await expect(resendPurchaseRequest({ requestId: "req", qty: 4, windowMinutes: 15,
-    targetSupplierId: null, supplierIds: ["a"] })).rejects.toThrow();
+    deliveryAt: new Date(Date.now()+86400000), targetSupplierId: null, supplierIds: ["a"] })).rejects.toThrow();
   expect(connection.query).toHaveBeenCalledTimes(1);
   expect(connection.execute).not.toHaveBeenCalled();
 });
