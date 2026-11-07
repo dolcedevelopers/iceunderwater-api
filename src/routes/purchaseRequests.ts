@@ -1,6 +1,7 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { requireAuth } from "../plugins/auth.js";
+import { purchaseHistoryFor } from "../services/purchaseHistoryService.js";
 import {
   acceptPurchaseRequestFor,
   createPurchaseRequestFor,
@@ -21,6 +22,7 @@ const createSchema = z
   .strict();
 
 const purchaseRequestRoutes: FastifyPluginAsync = async (app) => {
+  app.get("/me/purchase-history", async (request) => purchaseHistoryFor(requireAuth(request)));
   app.get("/purchase-requests/suppliers", async (request) => listPurchaseSuppliersFor(requireAuth(request)));
   app.get("/purchase-requests", async (request) => listPurchaseRequestsFor(requireAuth(request)));
 

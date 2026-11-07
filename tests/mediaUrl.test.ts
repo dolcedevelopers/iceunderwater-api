@@ -22,10 +22,10 @@ describe("public image URLs", () => {
     assert.equal(isHostedImageUrl("https://iceunderwater.co.za/x.jpg"), true);
   });
 
-  it("rewrites uploads to a medium catalog derivative", () => {
+  it("preserves real image URLs instead of inventing unavailable derivatives", () => {
     assert.equal(
       toCatalogImageUrl("https://iceunderwater.co.za/wp-content/uploads/2026/09/product.jpg"),
-      "https://iceunderwater.co.za/wp-content/uploads/2026/09/product-medium.jpg",
+      "https://iceunderwater.co.za/wp-content/uploads/2026/09/product.jpg",
     );
     assert.equal(
       toCatalogImageUrl("https://iceunderwater.co.za/wp-content/uploads/2026/09/product-150x150.jpg"),

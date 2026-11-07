@@ -11,17 +11,10 @@ export function isHostedImageUrl(value: string | null | undefined): boolean {
 }
 
 /**
- * Prefer a catalog-sized WordPress derivative so list screens do not download
- * the full original (often 1–3MB). Uses common WP / WooCommerce suffixes.
+ * Preserve the URL WordPress actually stored; invented derivatives can be missing.
  */
 export function toCatalogImageUrl(value: string | null | undefined): string {
-  const url = publicHttpsUrl(value);
-  if (!url) return "";
-  if (!/\/wp-content\/uploads\//i.test(url)) return url;
-  if (/-\d+x\d+\.(jpe?g|png|webp)(\?|$)/i.test(url)) return url;
-  if (/-medium\.(jpe?g|png|webp)(\?|$)/i.test(url)) return url;
-  // This site generates *-medium.* (and often *-150x150.*); WooCommerce may also use *-300x300.*.
-  return url.replace(/(\.(jpe?g|png|webp))(\?.*)?$/i, "-medium$1$3");
+  return publicHttpsUrl(value);
 }
 
 /** Pick the closest width from a srcset string (e.g. "a.jpg 527w, a-medium.jpg 300w"). */

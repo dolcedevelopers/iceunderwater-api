@@ -75,13 +75,16 @@ export async function listTransactions(filter: {
 
   const clauses = ["deleted_at IS NULL"];
   const params: Record<string, unknown> = {};
-  if (filter.customerEmail) {
+  if (filter.customerEmail && !filter.customerWpUserId) {
     clauses.push("customer_email = :customerEmail");
     params.customerEmail = filter.customerEmail;
   }
   if (filter.customerWpUserId) {
-    clauses.push("customer_wp_user_id = :customerWpUserId");
+    clauses.push(filter.customerEmail
+      ? "(customer_wp_user_id = :customerWpUserId OR ((customer_wp_user_id IS NULL OR customer_wp_user_id = 0) AND customer_email = :customerEmail))"
+      : "customer_wp_user_id = :customerWpUserId");
     params.customerWpUserId = filter.customerWpUserId;
+    if (filter.customerEmail) params.customerEmail = filter.customerEmail;
   }
   if (filter.reference) {
     clauses.push("reference = :reference");

@@ -4,6 +4,7 @@ import {
   type SessionLike,
 } from "../authz/permissions.js";
 import { accessDenied, validationError } from "../lib/errors.js";
+import { config } from "../config.js";
 import { toCatalogImageUrl } from "../lib/mediaUrl.js";
 import { centsToRands, randsToCents, sellingCentsFromCost } from "../lib/money.js";
 import type { ProductDto } from "../serializers/dto.js";
@@ -33,6 +34,8 @@ function mapProduct(row: {
   image: string;
   active: number;
   unit: string;
+  in_stock?: number;
+  has_options?: number;
 }): ProductDto {
   const costCents = Number(row.cost_cents) || 0;
   const priceCents = Number(row.price_cents) || 0;
@@ -50,6 +53,9 @@ function mapProduct(row: {
     description: stripHtml(row.description || ""),
     image: toCatalogImageUrl(row.image),
     active: Boolean(row.active),
+    inStock: row.in_stock !== 0,
+    hasOptions: Boolean(row.has_options),
+    permalink: `${config.WP_BASE_URL}/?post_type=product&p=${row.id}`,
   };
 }
 
@@ -115,12 +121,14 @@ async function resolveCategoryId(raw: string): Promise<number | undefined> {
 
 export async function listPublicProducts() {
   const rows = await listProductsFromWp({ publicOnly: true });
-  return rows.map(mapProduct);
+  return rows.map((row) => { const { costPrice, markupPercent, ...product } = mapProduct(row); return product; });
 }
 
 export async function getPublicProduct(id: string) {
   const rows = await listProductsFromWp({ publicOnly: true, productId: Number(id) });
-  return rows[0] ? mapProduct(rows[0]) : null;
+  if (!rows[0]) return null;
+  const { costPrice, markupPercent, ...product } = mapProduct(rows[0]);
+  return product;
 }
 
 export async function listCatalogueCategories() {

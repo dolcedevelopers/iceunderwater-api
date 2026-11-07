@@ -121,6 +121,16 @@ export async function sendWcInvoice(orderId: number): Promise<void> {
   });
 }
 
+/** Called only after the API verifies the current password and binds the WP user ID. */
+export async function updateWpPassword(wpUserId: number, password: string): Promise<void> {
+  const user = await httpJson<{ id: number }>(`${config.WP_BASE_URL}/wp-json/wc/v3/customers/${wpUserId}`, {
+    method: "PUT",
+    headers: { Authorization: `Basic ${Buffer.from(`${config.WC_CONSUMER_KEY}:${config.WC_CONSUMER_SECRET}`).toString("base64")}` },
+    body: { password }, retries: 0,
+  });
+  if (Number(user.id) !== wpUserId) throw new AppError(502, "UPSTREAM_ERROR", "Could not update your password.");
+}
+
 export async function uploadWpMedia(buffer: Buffer, filename: string, mime: string): Promise<{ id: number; sourceUrl: string }> {
   // WooCommerce consumer keys do not authenticate /wp/v2/media. Prefer the mu-plugin bridge.
   try {

@@ -8,6 +8,7 @@ import { config } from "../config.js";
 import { createFirstOwner } from "../services/seedOwner.js";
 import { readImageFromRequest } from "../lib/uploadRequest.js";
 import { uploadImageBuffer } from "../services/mediaService.js";
+import { changePasswordFor } from "../services/passwordService.js";
 
 const loginSchema = z
   .object({
@@ -50,6 +51,12 @@ const photosSchema = z
 const refreshSchema = z.object({ refreshToken: z.string().min(1) }).strict();
 
 const authRoutes: FastifyPluginAsync = async (app) => {
+  app.post("/auth/password", { config: { rateLimit: { max: 5, timeWindow: "1 minute" } } }, async (request) => {
+    const principal = requireAuth(request);
+    const input = z.object({ currentPassword: z.string().min(1).max(128),
+      newPassword: z.string().min(8).max(128), passwordConfirm: z.string().min(1).max(128) }).strict().parse(request.body);
+    return changePasswordFor(principal, input, request.ip);
+  });
   app.post("/auth/login", async (request) => {
     const body = loginSchema.parse(request.body);
     const result = await login(body);

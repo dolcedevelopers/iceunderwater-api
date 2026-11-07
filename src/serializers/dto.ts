@@ -22,6 +22,9 @@ export type SupplierDto = {
 };
 
 export type ProductDto = {
+  inStock?: boolean;
+  hasOptions?: boolean;
+  permalink?: string;
   id: string;
   supplierId: string;
   name: string;

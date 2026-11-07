@@ -1,0 +1,11 @@
+# Mobile buyer fixes
+
+- `GET /me/purchase-history` returns the authenticated buyer's complete request history and purchases. Expired and cancelled requests remain visible; company sales and incoming requests are excluded from the buyer view.
+- The mobile bag, supplier selection, and history cache are stored per account. Navigation keeps the history state mounted. Refresh failures preserve cached records, and notification availability no longer controls request history.
+- The public catalogue includes published WordPress products without a supplier assignment as well as products created through the app. Hidden/private/deleted products and products of suspended companies stay excluded. Supplier costs and markups stay on authenticated management routes.
+- Images use actual WordPress URLs instead of fabricated thumbnail filenames. Both product sources use the same currency, image, options and availability presentation. The Store API fallback follows pagination.
+- `POST /auth/password` accepts only `currentPassword`, `newPassword`, and `passwordConfirm`, with a rate limit. The server binds the target to the token, checks current credentials, and updates WordPress through the existing WooCommerce customer API; drivers use their own Argon2 hash. No new WordPress bridge endpoint is required. The existing WooCommerce credentials need customer-update permission. Refresh tokens are revoked on success and the app signs out. Already-issued access tokens retain their existing expiry.
+- Customer purchase lookups use their stable WordPress ID, with email matching only for legacy guest orders. Profile email edits cannot move another user's orders into their history.
+- The Android window excludes camera cutouts, uses an opaque visible status bar, and retains dynamic safe-area insets. Physical Huawei P40 verification is still required after APK installation.
+
+No new schema migration is required. Deploy the API before installing the updated APK. Validate with `npm test`, `npm run build`, and the Node 22+ SQL checks in `scripts/verify-company-scope.mjs` and `scripts/verify-catalogue-scope.mjs`. The mobile storage checks are in `scripts/verify-buyer-state.cjs` in the mobile repository.

@@ -112,7 +112,7 @@ export function canAccessTransaction(session: SessionLike, transaction: Transact
     const owner = normalizeEmail(transaction.customerEmail || "");
     const customerId = transaction.customerId != null ? String(transaction.customerId) : "";
     const selfId = session?.wpUserId != null ? String(session.wpUserId) : "";
-    return owner === email || (Boolean(customerId) && customerId === selfId);
+    return customerId && customerId !== "0" ? customerId === selfId : owner === email;
   }
   return false;
 }

@@ -105,6 +105,7 @@ export async function listTransactionsFor(
 
   if (isCustomer(session)) {
     const rows = await listTransactions({
+      customerWpUserId: session!.wpUserId,
       customerEmail: identityEmail(session),
       reference: opts.reference,
     });

@@ -30,7 +30,7 @@ export async function buildApp() {
     trustProxy: true,
     logger: {
       level: config.LOG_LEVEL,
-      redact: ["req.headers.authorization", "body.password", "body.refreshToken", "body.token"],
+      redact: ["req.headers.authorization", "body.password", "body.currentPassword", "body.newPassword", "body.passwordConfirm", "body.refreshToken", "body.token"],
     },
     requestIdHeader: "x-request-id",
     bodyLimit: 8_388_608,
