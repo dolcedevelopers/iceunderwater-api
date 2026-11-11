@@ -14,6 +14,9 @@ export type SupplierDto = {
   vatNumber: string;
   registrationNumber: string;
   address: string;
+  latitude?: number | null;
+  longitude?: number | null;
+  serviceRadiusKm?: number | null;
   logo: string;
   status: "active" | "pending" | "suspended";
   /** Admin-set markup % applied to supplier cost → shop selling price. */
@@ -123,6 +126,9 @@ export function mapSupplier(row: {
   vat_number?: string | null;
   registration_number?: string | null;
   address?: string | null;
+  latitude?: number | string | null;
+  longitude?: number | string | null;
+  service_radius_km?: number | string | null;
   logo_url: string;
   status: SupplierDto["status"];
   markup_percent?: number | string | null;
@@ -139,6 +145,9 @@ export function mapSupplier(row: {
     vatNumber: row.vat_number || "",
     registrationNumber: row.registration_number || "",
     address: row.address || "",
+    latitude: row.latitude == null ? null : Number(row.latitude),
+    longitude: row.longitude == null ? null : Number(row.longitude),
+    serviceRadiusKm: row.service_radius_km == null ? null : Number(row.service_radius_km),
     logo: publicHttpsUrl(row.logo_url),
     status: row.status,
     markupPercent: Number(row.markup_percent) || 0,

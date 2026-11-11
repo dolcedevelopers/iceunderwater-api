@@ -1,3 +1,4 @@
+import type { PoolConnection } from "mysql2/promise";
 import type { RowDataPacket } from "mysql2";
 import { execute, query } from "../db/pool.js";
 
@@ -175,4 +176,20 @@ export async function listProductsFromWp(filter: {
      ORDER BY p.post_title ASC`,
     params,
   );
+}
+
+export async function listStockingSupplierIds(wcProductId: number, qty: number, connection?: PoolConnection): Promise<string[]> {
+  const sql = `SELECT DISTINCT po.supplier_id FROM iuw_product_owners po
+      JOIN wp_posts p ON p.ID = po.wc_product_id
+      JOIN iuw_suppliers s ON s.id = po.supplier_id
+      WHERE po.wc_product_id = :wcProductId AND po.deleted_at IS NULL
+        AND p.post_type = 'product' AND p.post_status = 'publish'
+        AND s.status = 'active' AND s.deleted_at IS NULL
+        AND COALESCE((SELECT meta_value FROM wp_postmeta WHERE post_id = p.ID AND meta_key = '_stock_status' ORDER BY meta_id DESC LIMIT 1), 'instock') = 'instock'
+        AND (COALESCE((SELECT meta_value FROM wp_postmeta WHERE post_id = p.ID AND meta_key = '_manage_stock' ORDER BY meta_id DESC LIMIT 1), 'no') <> 'yes'
+          OR CAST(COALESCE((SELECT meta_value FROM wp_postmeta WHERE post_id = p.ID AND meta_key = '_stock' ORDER BY meta_id DESC LIMIT 1), '0') AS DECIMAL(14,3)) >= :qty)`;
+  const rows = connection
+    ? (await connection.query<(RowDataPacket & { supplier_id: string })[]>(sql, { wcProductId, qty }))[0]
+    : await query<(RowDataPacket & { supplier_id: string })[]>(sql, { wcProductId, qty });
+  return rows.map((row) => row.supplier_id);
 }

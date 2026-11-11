@@ -1,37 +1,41 @@
+import { listStockingSupplierIds } from "../src/repositories/productRepo.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Principal } from "../src/authz/permissions.js";
 import * as requests from "../src/repositories/purchaseRequestRepo.js";
 import { insertNotification } from "../src/repositories/notificationRepo.js";
 import * as suppliers from "../src/repositories/supplierRepo.js";
 import { createPurchaseRequestFor as createRaw, validateDeliveryAt, listPurchaseSuppliersFor, resendPurchaseRequestFor,
-  startCheckoutFor, fulfillPurchaseRequestFromOrder } from "../src/services/purchaseRequestService.js";
+  matchPurchaseSuppliersFor, acceptPurchaseRequestFor, startCheckoutFor, fulfillPurchaseRequestFromOrder } from "../src/services/purchaseRequestService.js";
 
 vi.mock("../src/repositories/purchaseRequestRepo.js", () => ({
   acceptPurchaseRequest: vi.fn(), expireStalePurchaseRequests: vi.fn(), findPurchaseRequestById: vi.fn(),
   insertPurchaseOffers: vi.fn(), insertPurchaseRequest: vi.fn(), listPurchaseRequests: vi.fn(),
   markCheckoutStarted: vi.fn(), markPurchaseRequestPaid: vi.fn(), resendPurchaseRequest: vi.fn(),
 }));
+vi.mock("../src/repositories/productRepo.js", () => ({ listStockingSupplierIds: vi.fn() }));
 vi.mock("../src/repositories/supplierRepo.js", () => ({ listSuppliers: vi.fn() }));
 vi.mock("../src/repositories/auditRepo.js", () => ({ writeAudit: vi.fn() }));
 vi.mock("../src/repositories/notificationRepo.js", () => ({ insertNotification: vi.fn() }));
 vi.mock("../src/clients/woocommerce.js", () => ({ getWcProduct: vi.fn(async () => ({ name: "Water" })) }));
 
+const location = { address: "Johannesburg", latitude: -26.2041, longitude: 28.0473, fulfilmentType: "delivery" as const };
 const deliveryAt = new Date(Date.now() + 86400000).toISOString();
-const createPurchaseRequestFor: typeof createRaw = (session, data, ip) => createRaw(session, { deliveryAt, ...data }, ip);
+const createPurchaseRequestFor: typeof createRaw = (session, data, ip) => createRaw(session, { deliveryAt, location, ...data }, ip);
 const customer: Principal = { sub: 1, wpUserId: 1, role: "customer", email: "buyer@example.com" };
 const company: Principal = { ...customer, role: "supplier", supplierId: "own" };
 function row(changes: Record<string, unknown> = {}) {
   return { id: "req", customer_wp_user_id: 1, customer_email: customer.email, requester_supplier_id: null,
-    delivery_at: new Date(deliveryAt), target_supplier_id: null, wc_product_id: 5, product_name: "Water", qty: 2, status: "open",
+    location_address: location.address, location_latitude: location.latitude, location_longitude: location.longitude, fulfilment_type: location.fulfilmentType, delivery_at: new Date(deliveryAt), target_supplier_id: null, wc_product_id: 5, product_name: "Water", qty: 2, status: "open",
     accepted_supplier_id: null, checkout_url: "", created_at: new Date(), ...changes } as requests.PurchaseRequestRow;
 }
 
 beforeEach(() => {
   vi.resetAllMocks();
+  vi.mocked(listStockingSupplierIds).mockResolvedValue(["own", "a", "b"]);
   vi.mocked(suppliers.listSuppliers).mockResolvedValue([
     { id: "own", name: "Own", city: "JHB" }, { id: "a", name: "A", city: "JHB" },
     { id: "b", name: "B", city: "Cape Town" },
-  ] as never);
+  ].map((supplier) => ({ ...supplier, latitude: location.latitude, longitude: location.longitude, service_radius_km: 25 })) as never);
   vi.mocked(requests.listPurchaseRequests).mockResolvedValue([]);
   vi.mocked(requests.findPurchaseRequestById).mockResolvedValue(row());
   vi.mocked(requests.insertPurchaseRequest).mockImplementation(async (input) => row(input));
@@ -127,7 +131,7 @@ describe("requested delivery schedule", () => {
     expect(requests.insertPurchaseRequest).not.toHaveBeenCalled();
   });
   it("stores a future date as UTC and returns it to the requester", async () => {
-    const result = await createRaw(customer, { wcProductId: 5, deliveryAt });
+    const result = await createRaw(customer, { wcProductId: 5, location, deliveryAt });
     expect(requests.insertPurchaseRequest).toHaveBeenCalledWith(expect.objectContaining({ delivery_at: new Date(deliveryAt) }));
     expect(result.deliveryAt).toBe(deliveryAt);
     expect(result.deliveryTimezone).toBe("Africa/Johannesburg");
@@ -152,5 +156,51 @@ describe("requested delivery schedule", () => {
     vi.mocked(requests.findPurchaseRequestById).mockResolvedValue(row({ status: "accepted" }));
     await expect(resendPurchaseRequestFor(customer,"req",{ deliveryAt })).rejects.toThrow();
     expect(requests.resendPurchaseRequest).not.toHaveBeenCalled();
+  });
+});
+
+
+describe("stock and supplier-defined service radius", () => {
+  it("notifies only exact-product stock owners within range", async () => {
+    vi.mocked(listStockingSupplierIds).mockResolvedValue(["a", "b"]);
+    vi.mocked(suppliers.listSuppliers).mockResolvedValue([
+      { id: "a", latitude: location.latitude, longitude: location.longitude, service_radius_km: 10 },
+      { id: "b", latitude: -33.925, longitude: 18.424, service_radius_km: 20 },
+      { id: "nearby-non-owner", latitude: location.latitude, longitude: location.longitude, service_radius_km: 50 },
+    ] as never);
+    await createPurchaseRequestFor(customer, { wcProductId: 5, qty: 4 });
+    expect(listStockingSupplierIds).toHaveBeenCalledWith(5, 4);
+    expect(requests.insertPurchaseOffers).toHaveBeenCalledWith(expect.any(String), ["a"]);
+    expect(insertNotification).toHaveBeenCalledTimes(1);
+    expect(insertNotification).toHaveBeenCalledWith(expect.objectContaining({ recipientId: "a" }));
+  });
+  it("fails closed for unavailable stock or unconfigured service area", async () => {
+    vi.mocked(listStockingSupplierIds).mockResolvedValue([]);
+    await expect(createPurchaseRequestFor(customer, { wcProductId: 5 })).rejects.toThrow();
+    vi.mocked(listStockingSupplierIds).mockResolvedValue(["a"]);
+    vi.mocked(suppliers.listSuppliers).mockResolvedValue([{ id: "a" }] as never);
+    await expect(createPurchaseRequestFor(customer, { wcProductId: 5 })).rejects.toThrow();
+    expect(insertNotification).not.toHaveBeenCalled();
+  });
+  it("supports All for a mixed basket without suggesting a supplier who lacks an item", async () => {
+    vi.mocked(listStockingSupplierIds).mockImplementation(async (id) => id === 5 ? ["a"] : ["b"]);
+    const result = await matchPurchaseSuppliersFor(customer, { items: [{ wcProductId: 5, qty: 1 }, { wcProductId: 6, qty: 1 }], location });
+    expect(result.allAvailable).toBe(true);
+    expect(result.suppliers).toEqual([]);
+  });
+  it("uses the pickup search address and rejects a selected supplier outside its range", async () => {
+    await createPurchaseRequestFor(customer, { wcProductId: 5, location: { ...location, fulfilmentType: "pickup" }, targetSupplierId: "a" });
+    expect(insertNotification).toHaveBeenCalledWith(expect.objectContaining({ body: expect.stringContaining("Pickup search area: Johannesburg") }));
+    await expect(createPurchaseRequestFor(customer, { wcProductId: 5, location: { ...location, latitude: -33.9 }, targetSupplierId: "a" })).rejects.toThrow();
+  });
+  it("rechecks locked request stock and the supplier's current radius on acceptance", async () => {
+    vi.mocked(requests.acceptPurchaseRequest).mockImplementation(async (...args) => {
+      const validate = args[3]!;
+      await validate(row({ qty: 9 }), { id: "a", latitude: location.latitude, longitude: location.longitude, service_radius_km: 1 } as never, {} as never);
+      return row({ status: "accepted", accepted_supplier_id: "a" });
+    });
+    vi.mocked(listStockingSupplierIds).mockResolvedValue([]);
+    await expect(acceptPurchaseRequestFor({ ...company, supplierId: "a" }, "req")).rejects.toThrow();
+    expect(listStockingSupplierIds).toHaveBeenCalledWith(5, 9, expect.any(Object));
   });
 });

@@ -26,3 +26,15 @@ it("does not erase offers when an acceptance wins the resend race", async () => 
   expect(connection.query).toHaveBeenCalledTimes(1);
   expect(connection.execute).not.toHaveBeenCalled();
 });
+
+it("validates the locked destination and quantity before accepting", async () => {
+  const locked = { id: "req", status: "open", qty: 8, is_expired: 0, location_address: "Changed address", location_latitude: -33, location_longitude: 18 };
+  const supplier = { id: "a", service_radius_km: 5 };
+  connection.query.mockResolvedValueOnce([[locked]]).mockResolvedValueOnce([[{ supplier_id: "a" }]]).mockResolvedValueOnce([[supplier]]);
+  const validate = vi.fn(async () => { throw new Error("Outside service area"); });
+  const checkout = vi.fn();
+  await expect(acceptPurchaseRequest("req", "a", checkout, validate)).rejects.toThrow("Outside service area");
+  expect(validate).toHaveBeenCalledWith(locked, supplier, connection);
+  expect(checkout).not.toHaveBeenCalled();
+  expect(connection.query).toHaveBeenCalledTimes(3);
+});

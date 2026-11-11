@@ -49,6 +49,9 @@ const patchSchema = z
     vatNumber: vatNumberSchema,
     registrationNumber: registrationNumberSchema,
     address: addressSchema,
+    latitude: z.number().min(-90).max(90).nullable().optional(),
+    longitude: z.number().min(-180).max(180).nullable().optional(),
+    serviceRadiusKm: z.number().positive().max(99999).nullable().optional(),
     logo: z.string().optional(),
     status: z.enum(["active", "pending", "suspended"]).optional(),
     /** Admin-only: percent markup on supplier cost (e.g. 15 = +15%). */

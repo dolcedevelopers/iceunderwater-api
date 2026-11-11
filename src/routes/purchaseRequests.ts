@@ -8,12 +8,19 @@ import {
   getPurchaseRequestFor,
   listPurchaseRequestsFor,
   listPurchaseSuppliersFor,
+  matchPurchaseSuppliersFor,
   resendPurchaseRequestFor,
   startCheckoutFor,
 } from "../services/purchaseRequestService.js";
 
+const locationSchema = z.object({
+  address: z.string().trim().min(1).max(512), latitude: z.number().min(-90).max(90),
+  longitude: z.number().min(-180).max(180), fulfilmentType: z.enum(["delivery", "pickup"]),
+}).strict();
+
 const createSchema = z
   .object({
+    location: locationSchema,
     deliveryAt: z.string().datetime({ offset: true }),
     wcProductId: z.coerce.number().int().positive(),
     qty: z.coerce.number().int().positive().optional(),
@@ -23,6 +30,13 @@ const createSchema = z
   .strict();
 
 const purchaseRequestRoutes: FastifyPluginAsync = async (app) => {
+  app.post("/purchase-requests/suppliers/match", async (request) => {
+    const principal = requireAuth(request);
+    const body = z.object({ location: locationSchema,
+      items: z.array(z.object({ wcProductId: z.number().int().positive(), qty: z.number().int().positive() }).strict()).min(1).max(100),
+    }).strict().parse(request.body);
+    return matchPurchaseSuppliersFor(principal, body);
+  });
   app.get("/me/purchase-history", async (request) => purchaseHistoryFor(requireAuth(request)));
   app.get("/purchase-requests/suppliers", async (request) => listPurchaseSuppliersFor(requireAuth(request)));
   app.get("/purchase-requests", async (request) => listPurchaseRequestsFor(requireAuth(request)));
@@ -46,6 +60,7 @@ const purchaseRequestRoutes: FastifyPluginAsync = async (app) => {
 
   app.post<{ Params: { id: string } }>("/purchase-requests/:id/resend", async (request) => {
     const body = z.object({
+      location: locationSchema.optional(),
       deliveryAt: z.string().datetime({ offset: true }).optional(),
       qty: z.coerce.number().int().positive().optional(),
       targetSupplierId: z.string().trim().min(1).max(64).nullable().optional(),

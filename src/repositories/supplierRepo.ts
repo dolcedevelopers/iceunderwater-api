@@ -14,6 +14,9 @@ export type SupplierRow = RowDataPacket & {
   vat_number: string;
   registration_number: string;
   address: string;
+  latitude?: number | string | null;
+  longitude?: number | string | null;
+  service_radius_km?: number | string | null;
   logo_url: string;
   status: "active" | "pending" | "suspended";
   markup_percent: number;
@@ -112,6 +115,9 @@ export async function updateSupplier(
     status: SupplierRow["status"];
     markup_percent: number;
     wp_user_id: number;
+    latitude: number | null;
+    longitude: number | null;
+    service_radius_km: number | null;
   }>,
 ): Promise<SupplierRow | null> {
   const fields: string[] = [];

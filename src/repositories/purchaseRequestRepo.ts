@@ -1,3 +1,6 @@
+import type { PoolConnection } from "mysql2/promise";
+import type { SupplierRow } from "./supplierRepo.js";
+import type { RequestLocation } from "../lib/serviceArea.js";
 import type { RowDataPacket } from "mysql2";
 import { execute, query, withTransaction } from "../db/pool.js";
 import { conflict, notFound } from "../lib/errors.js";
@@ -33,6 +36,10 @@ export type PurchaseRequestRow = RowDataPacket & {
   paid_at: Date | null;
   delivery_status?: string | null;
   delivery_at?: Date | null;
+  fulfilment_type?: "delivery" | "pickup" | null;
+  location_address?: string | null;
+  location_latitude?: number | string | null;
+  location_longitude?: number | string | null;
 };
 
 export type PurchaseOfferRow = RowDataPacket & {
@@ -60,18 +67,19 @@ export async function insertPurchaseRequest(row: {
   qty: number;
   window_minutes: number;
   delivery_at: Date;
+  location: RequestLocation;
 }): Promise<PurchaseRequestRow> {
   const windowMinutes = acceptWindowMinutes(row.window_minutes);
   // INTERVAL cannot take a bound parameter on this driver, so the window is inlined after clamping.
   await execute(
     `INSERT INTO iuw_purchase_requests
       (id, customer_wp_user_id, customer_email, requester_supplier_id, target_supplier_id,
-       wc_product_id, product_name, qty, delivery_at, status, expires_at)
+       wc_product_id, product_name, qty, delivery_at, fulfilment_type, location_address, location_latitude, location_longitude, status, expires_at)
      VALUES
       (:id, :customer_wp_user_id, :customer_email, :requester_supplier_id, :target_supplier_id,
-       :wc_product_id, :product_name, :qty, :delivery_at, 'open',
+       :wc_product_id, :product_name, :qty, :delivery_at, :fulfilmentType, :locationAddress, :latitude, :longitude, 'open',
        LEAST(:delivery_at, DATE_ADD(UTC_TIMESTAMP(3), INTERVAL ${windowMinutes} MINUTE)))`,
-    row,
+    { ...row, fulfilmentType: row.location.fulfilmentType, locationAddress: row.location.address, latitude: row.location.latitude, longitude: row.location.longitude },
   );
   const created = await findPurchaseRequestById(row.id);
   if (!created) throw new Error("purchase request insert failed");
@@ -99,6 +107,7 @@ export async function resendPurchaseRequest(input: {
   qty: number;
   windowMinutes: number;
   deliveryAt: Date;
+  location?: RequestLocation;
   targetSupplierId: string | null;
   supplierIds: string[];
 }): Promise<PurchaseRequestRow> {
@@ -114,6 +123,10 @@ export async function resendPurchaseRequest(input: {
     `UPDATE iuw_purchase_requests
         SET qty = :qty,
             delivery_at = :deliveryAt,
+            fulfilment_type = :fulfilmentType,
+            location_address = :locationAddress,
+            location_latitude = :latitude,
+            location_longitude = :longitude,
             target_supplier_id = :targetSupplierId,
             status = 'open',
             accepted_supplier_id = NULL,
@@ -122,7 +135,10 @@ export async function resendPurchaseRequest(input: {
             resend_count = resend_count + 1,
             expires_at = LEAST(:deliveryAt, DATE_ADD(UTC_TIMESTAMP(3), INTERVAL ${windowMinutes} MINUTE))
       WHERE id = :requestId AND status IN ('open', 'expired')`,
-    input,
+    { ...input, fulfilmentType: input.location?.fulfilmentType ?? locked[0].fulfilment_type,
+      locationAddress: input.location?.address ?? locked[0].location_address,
+      latitude: input.location?.latitude ?? locked[0].location_latitude,
+      longitude: input.location?.longitude ?? locked[0].location_longitude },
   );
   await conn.query(`DELETE FROM iuw_purchase_request_offers WHERE request_id = :requestId`, {
     requestId: input.requestId,
@@ -201,6 +217,7 @@ export async function acceptPurchaseRequest(
   requestId: string,
   supplierId: string,
   checkoutUrlFor: (row: PurchaseRequestRow) => string,
+  validateFulfilment?: (row: PurchaseRequestRow, supplier: SupplierRow, connection: PoolConnection) => Promise<void>,
 ): Promise<PurchaseRequestRow> {
   return withTransaction(async (conn) => {
     // Expiry is evaluated by the database so it cannot drift with server clocks.
@@ -227,13 +244,15 @@ export async function acceptPurchaseRequest(
       [requestId, supplierId],
     );
     if (!offers[0]) throw notFound("You were not offered this request.");
-    const [suppliers] = await conn.query<RowDataPacket[]>(
-      `SELECT id FROM iuw_suppliers WHERE id = ? AND status = 'active' AND deleted_at IS NULL FOR UPDATE`,
+    const [suppliers] = await conn.query<SupplierRow[]>(
+      `SELECT * FROM iuw_suppliers WHERE id = ? AND status = 'active' AND deleted_at IS NULL FOR UPDATE`,
       [supplierId],
     );
     if (!suppliers[0] || (row.target_supplier_id && row.target_supplier_id !== supplierId)) {
       throw conflict("This supplier cannot accept this request.");
     }
+
+    await validateFulfilment?.(row, suppliers[0], conn);
 
     await conn.query(
       `UPDATE iuw_purchase_requests

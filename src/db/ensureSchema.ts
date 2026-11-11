@@ -62,6 +62,13 @@ async function addIndex(
  */
 export async function ensureLiveSchemaOnConnection(conn: SchemaConn): Promise<string[]> {
   const applied: string[] = [];
+  await addColumn(conn, "iuw_suppliers", "latitude", "DECIMAL(10,7) NULL", applied);
+  await addColumn(conn, "iuw_suppliers", "longitude", "DECIMAL(10,7) NULL", applied);
+  await addColumn(conn, "iuw_suppliers", "service_radius_km", "DECIMAL(7,2) NULL", applied);
+  await addColumn(conn, "iuw_purchase_requests", "fulfilment_type", "VARCHAR(16) NULL", applied);
+  await addColumn(conn, "iuw_purchase_requests", "location_address", "VARCHAR(512) NULL", applied);
+  await addColumn(conn, "iuw_purchase_requests", "location_latitude", "DECIMAL(10,7) NULL", applied);
+  await addColumn(conn, "iuw_purchase_requests", "location_longitude", "DECIMAL(10,7) NULL", applied);
 
   await addColumn(conn, "iuw_suppliers", "vat_number", "VARCHAR(64) NOT NULL DEFAULT ''", applied);
   await addColumn(conn, "iuw_suppliers", "registration_number", "VARCHAR(64) NOT NULL DEFAULT ''", applied);

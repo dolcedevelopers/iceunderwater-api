@@ -1,3 +1,5 @@
+import { listStockingSupplierIds } from "../repositories/productRepo.js";
+import { requestLocation, supplierServesLocation, distanceKm, type RequestLocation } from "../lib/serviceArea.js";
 import {
   canCreatePurchaseRequests,
   isAdmin,
@@ -58,6 +60,10 @@ function mapRequest(row: PurchaseRequestRow, options: { includeCheckoutUrl?: boo
     qty: Number(row.qty),
     status: row.status,
     deliveryStatus: row.delivery_status || null,
+    location: row.location_address && row.location_latitude != null && row.location_longitude != null ? {
+      address: row.location_address, latitude: Number(row.location_latitude), longitude: Number(row.location_longitude),
+      fulfilmentType: row.fulfilment_type || "delivery",
+    } : null,
     deliveryAt: row.delivery_at ? new Date(row.delivery_at).toISOString() : null,
     deliveryTimezone: "Africa/Johannesburg",
     acceptedSupplierId: row.accepted_supplier_id || null,
@@ -132,11 +138,37 @@ export async function listPurchaseSuppliersFor(session: SessionLike) {
   }));
 }
 
-async function targetsForSelection(session: SessionLike, targetSupplierId?: string | null): Promise<string[]> {
-  const suppliers = await listPurchaseSuppliersFor(session);
+async function eligibleSuppliers(session: SessionLike, wcProductId: number, qty: number, location: RequestLocation) {
+  const requester = requesterOf(session);
+  const [suppliers, stockingIds] = await Promise.all([
+    listSuppliers({ status: "active" }), listStockingSupplierIds(wcProductId, qty),
+  ]);
+  const stocking = new Set(stockingIds);
+  return suppliers.filter((supplier) => supplier.id !== requester.supplierId
+    && stocking.has(supplier.id) && supplierServesLocation(supplier, location));
+}
+
+export async function matchPurchaseSuppliersFor(session: SessionLike, data: {
+  items: { wcProductId: number; qty: number }[]; location: RequestLocation;
+}) {
+  requesterOf(session);
+  const location = requestLocation(data.location);
+  const matches = await Promise.all(data.items.map((item) => eligibleSuppliers(session, item.wcProductId, item.qty, location)));
+  const common = matches[0]?.filter((supplier) => matches.every((group) => group.some((entry) => entry.id === supplier.id))) || [];
+  const history = await listPurchaseSuppliersFor(session);
+  return {
+    allAvailable: matches.length > 0 && matches.every((group) => group.length > 0),
+    suppliers: common.map((supplier) => ({ id: supplier.id, name: supplier.name, city: supplier.city,
+      previous: Boolean(history.find((entry) => entry.id === supplier.id)?.previous),
+      distanceKm: Math.round(distanceKm({ latitude: Number(supplier.latitude), longitude: Number(supplier.longitude) }, location) * 10) / 10 })),
+  };
+}
+
+async function targetsForSelection(session: SessionLike, wcProductId: number, qty: number, location: RequestLocation, targetSupplierId?: string | null): Promise<string[]> {
+  const suppliers = await eligibleSuppliers(session, wcProductId, qty, location);
   if (targetSupplierId) {
     if (!suppliers.some((row) => row.id === targetSupplierId)) {
-      throw validationError("Choose an available supplier other than your own company.");
+      throw validationError("This supplier does not have enough stock of the product or does not serve the chosen location.");
     }
     return [targetSupplierId];
   }
@@ -150,13 +182,14 @@ async function notifySuppliers(input: {
   productName: string;
   requesterSupplierId: string | null;
   deliveryAt: Date;
+  location: RequestLocation;
 }): Promise<void> {
   for (const supplierId of input.supplierIds) {
     await insertNotification({
       recipientKind: "supplier",
       recipientId: supplierId,
       title: "New product request",
-      body: `${buyerLabel(input.requesterSupplierId)} wants ${input.qty} × ${input.productName}. Delivery requested: ${input.deliveryAt.toLocaleString("en-ZA", { timeZone: "Africa/Johannesburg", dateStyle: "medium", timeStyle: "short" })} SAST. Accept to open checkout.`,
+      body: `${buyerLabel(input.requesterSupplierId)} wants ${input.qty} × ${input.productName}. ${input.location.fulfilmentType === "pickup" ? "Pickup" : "Delivery"} requested: ${input.deliveryAt.toLocaleString("en-ZA", { timeZone: "Africa/Johannesburg", dateStyle: "medium", timeStyle: "short" })} SAST. ${input.location.fulfilmentType === "pickup" ? "Pickup search area" : "Delivery address"}: ${input.location.address}. Accept to open checkout.`,
       kind: "purchase_request",
       refType: "purchase_request",
       refId: input.requestId,
@@ -166,11 +199,12 @@ async function notifySuppliers(input: {
 
 export async function createPurchaseRequestFor(
   session: SessionLike,
-  data: { wcProductId: number; qty?: number; productName?: string; targetSupplierId?: string | null; deliveryAt?: string },
+  data: { wcProductId: number; qty?: number; productName?: string; targetSupplierId?: string | null; deliveryAt?: string; location?: RequestLocation },
   ip?: string,
 ) {
   const requester = requesterOf(session);
   const deliveryAt = validateDeliveryAt(data.deliveryAt);
+  const location = requestLocation(data.location);
 
   const qty = Math.max(1, Math.floor(Number(data.qty) || 1));
   const wcProductId = Number(data.wcProductId);
@@ -186,12 +220,12 @@ export async function createPurchaseRequestFor(
     productName = productName || `Product #${wcProductId}`;
   }
 
-  const supplierIds = await targetsForSelection(session, data.targetSupplierId);
+  const supplierIds = await targetsForSelection(session, wcProductId, qty, location, data.targetSupplierId);
   if (!supplierIds.length) {
     throw validationError(
       requester.supplierId
-        ? "No other companies currently sell this product."
-        : "No companies are available for this product yet.",
+        ? "No other companies have enough stock within range of this address."
+        : "No suppliers currently have enough stock of this product within range of the chosen address.",
     );
   }
 
@@ -207,6 +241,7 @@ export async function createPurchaseRequestFor(
     qty,
     window_minutes: PURCHASE_REQUEST_ACCEPT_WINDOW_MINUTES,
     delivery_at: deliveryAt,
+    location,
   });
   await insertPurchaseOffers(id, supplierIds);
   await notifySuppliers({
@@ -216,6 +251,7 @@ export async function createPurchaseRequestFor(
     productName,
     requesterSupplierId: requester.supplierId,
     deliveryAt,
+    location,
   });
 
   await writeAudit({
@@ -281,6 +317,13 @@ export async function acceptPurchaseRequestFor(session: SessionLike, id: string,
   }
   const accepted = await acceptPurchaseRequest(id, scope, (current) =>
     buildCheckoutUrl(Number(current.wc_product_id), Number(current.qty), current.id),
+    async (current, supplier, connection) => {
+      const location = requestLocation(mapRequest(current).location);
+      const stocking = await listStockingSupplierIds(Number(current.wc_product_id), Number(current.qty), connection);
+      if (!stocking.includes(scope) || !supplierServesLocation(supplier, location)) {
+        throw validationError("The product stock or service area has changed. This request can no longer be accepted.");
+      }
+    },
   );
 
   await insertNotification({
@@ -321,7 +364,7 @@ export async function startCheckoutFor(session: SessionLike, id: string) {
 export async function resendPurchaseRequestFor(
   session: SessionLike,
   id: string,
-  data: { qty?: number; targetSupplierId?: string | null; deliveryAt?: string } = {},
+  data: { qty?: number; targetSupplierId?: string | null; deliveryAt?: string; location?: RequestLocation } = {},
   ip?: string,
 ) {
   const requester = requesterOf(session);
@@ -333,15 +376,16 @@ export async function resendPurchaseRequestFor(
     throw validationError("This request can no longer be changed.");
   }
 
+  const location = requestLocation(data.location ?? mapRequest(row).location);
   const deliveryAt = validateDeliveryAt(data.deliveryAt ?? (row.delivery_at ? new Date(row.delivery_at).toISOString() : undefined));
   const qty = Math.max(1, Math.floor(Number(data.qty) || Number(row.qty) || 1));
   const targetSupplierId = data.targetSupplierId === undefined ? row.target_supplier_id : data.targetSupplierId;
-  const supplierIds = await targetsForSelection(session, targetSupplierId);
+  const supplierIds = await targetsForSelection(session, Number(row.wc_product_id), qty, location, targetSupplierId);
   if (!supplierIds.length) {
     throw validationError(
       requester.supplierId
-        ? "No other companies currently sell this product."
-        : "No companies are available for this product yet.",
+        ? "No other companies have enough stock within range of this address."
+        : "No suppliers currently have enough stock of this product within range of the chosen address.",
     );
   }
 
@@ -349,6 +393,7 @@ export async function resendPurchaseRequestFor(
     requestId: id,
     qty,
     windowMinutes: PURCHASE_REQUEST_ACCEPT_WINDOW_MINUTES,
+    location,
     deliveryAt,
     targetSupplierId: targetSupplierId || null,
     supplierIds,
@@ -360,6 +405,7 @@ export async function resendPurchaseRequestFor(
     productName: row.product_name,
     requesterSupplierId: requester.supplierId,
     deliveryAt,
+    location,
   });
 
   await writeAudit({
