@@ -3,6 +3,7 @@ import { z } from "zod";
 import { requireAuth } from "../plugins/auth.js";
 import { purchaseHistoryFor } from "../services/purchaseHistoryService.js";
 import {
+  cancelPurchaseRequestFor,
   acceptPurchaseRequestFor,
   createPurchaseRequestFor,
   getPurchaseRequestFor,
@@ -52,6 +53,10 @@ const purchaseRequestRoutes: FastifyPluginAsync = async (app) => {
 
   app.post<{ Params: { id: string } }>("/purchase-requests/:id/accept", async (request) =>
     acceptPurchaseRequestFor(requireAuth(request), request.params.id, request.ip),
+  );
+
+  app.post<{ Params: { id: string } }>("/purchase-requests/:id/cancel", async (request) =>
+    cancelPurchaseRequestFor(requireAuth(request), request.params.id, request.ip),
   );
 
   app.post<{ Params: { id: string } }>("/purchase-requests/:id/checkout", async (request) =>

@@ -20,6 +20,7 @@ import { writeAudit } from "../repositories/auditRepo.js";
 import { listSuppliers } from "../repositories/supplierRepo.js";
 import { insertNotification } from "../repositories/notificationRepo.js";
 import {
+  cancelPurchaseRequest,
   acceptPurchaseRequest,
   expireStalePurchaseRequests,
   findPurchaseRequestById,
@@ -357,8 +358,23 @@ export async function startCheckoutFor(session: SessionLike, id: string) {
   if (!row.accepted_supplier_id || (row.status !== "accepted" && row.status !== "checkout_started")) {
     throw validationError("Wait for a company to accept before paying.");
   }
-  await markCheckoutStarted(id);
-  return mapRequest({ ...row, status: "checkout_started" }, { includeCheckoutUrl: true });
+  const updated = await markCheckoutStarted(id);
+  return mapRequest(updated, { includeCheckoutUrl: true });
+}
+
+export async function cancelPurchaseRequestFor(session: SessionLike, id: string, ip?: string) {
+  const requester = requesterOf(session);
+  const row = await findPurchaseRequestById(id);
+  if (!row) throw notFound("That request is not available.");
+  if (!ownsRequest(row, requester) || (!requester.supplierId && row.requester_supplier_id)) throw accessDenied();
+  const cancelled = await cancelPurchaseRequest(id, { customerWpUserId: requester.principal.wpUserId!, supplierId: requester.supplierId });
+  if (row.status !== "cancelled") {
+    if (cancelled.accepted_supplier_id) await insertNotification({ recipientKind: "supplier", recipientId: cancelled.accepted_supplier_id,
+      title: "Request cancelled", body: `The buyer cancelled their request for ${cancelled.qty} × ${cancelled.product_name}.`,
+      kind: "purchase_cancelled", refType: "purchase_request", refId: id });
+    await writeAudit({ session, action: "purchase_request.cancel", targetType: "purchase_request", targetId: id, ip, after: mapRequest(cancelled) });
+  }
+  return mapRequest(cancelled);
 }
 
 export async function resendPurchaseRequestFor(

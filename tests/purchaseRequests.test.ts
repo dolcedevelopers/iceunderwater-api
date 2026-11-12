@@ -5,10 +5,10 @@ import * as requests from "../src/repositories/purchaseRequestRepo.js";
 import { insertNotification } from "../src/repositories/notificationRepo.js";
 import * as suppliers from "../src/repositories/supplierRepo.js";
 import { createPurchaseRequestFor as createRaw, validateDeliveryAt, listPurchaseSuppliersFor, resendPurchaseRequestFor,
-  matchPurchaseSuppliersFor, acceptPurchaseRequestFor, startCheckoutFor, fulfillPurchaseRequestFromOrder } from "../src/services/purchaseRequestService.js";
+  cancelPurchaseRequestFor, matchPurchaseSuppliersFor, acceptPurchaseRequestFor, startCheckoutFor, fulfillPurchaseRequestFromOrder } from "../src/services/purchaseRequestService.js";
 
 vi.mock("../src/repositories/purchaseRequestRepo.js", () => ({
-  acceptPurchaseRequest: vi.fn(), expireStalePurchaseRequests: vi.fn(), findPurchaseRequestById: vi.fn(),
+  cancelPurchaseRequest: vi.fn(), acceptPurchaseRequest: vi.fn(), expireStalePurchaseRequests: vi.fn(), findPurchaseRequestById: vi.fn(),
   insertPurchaseOffers: vi.fn(), insertPurchaseRequest: vi.fn(), listPurchaseRequests: vi.fn(),
   markCheckoutStarted: vi.fn(), markPurchaseRequestPaid: vi.fn(), resendPurchaseRequest: vi.fn(),
 }));
@@ -41,6 +41,8 @@ beforeEach(() => {
   vi.mocked(requests.insertPurchaseRequest).mockImplementation(async (input) => row(input));
   vi.mocked(requests.resendPurchaseRequest).mockResolvedValue(row());
   vi.mocked(requests.markPurchaseRequestPaid).mockResolvedValue(true);
+  vi.mocked(requests.markCheckoutStarted).mockImplementation(async () => ({ ...(await requests.findPurchaseRequestById("req"))!, status: "checkout_started" }));
+  vi.mocked(requests.cancelPurchaseRequest).mockResolvedValue(row({ status: "cancelled", checkout_url: "" }));
 });
 
 describe("supplier routing for individual and company buyers", () => {
@@ -202,5 +204,32 @@ describe("stock and supplier-defined service radius", () => {
     vi.mocked(listStockingSupplierIds).mockResolvedValue([]);
     await expect(acceptPurchaseRequestFor({ ...company, supplierId: "a" }, "req")).rejects.toThrow();
     expect(listStockingSupplierIds).toHaveBeenCalledWith(5, 9, expect.any(Object));
+  });
+});
+
+
+describe("buyer cancellation", () => {
+  it.each([customer, company])("allows a $role to cancel only their own request", async (buyer) => {
+    vi.mocked(requests.findPurchaseRequestById).mockResolvedValue(row({ requester_supplier_id: buyer.supplierId || null }));
+    const cancelled = await cancelPurchaseRequestFor(buyer, "req");
+    expect(cancelled.status).toBe("cancelled");
+    expect(cancelled.checkoutUrl).toBe("");
+    expect(requests.cancelPurchaseRequest).toHaveBeenCalledWith("req", { customerWpUserId: 1, supplierId: buyer.supplierId || null });
+  });
+  it.each([customer, company])("rejects cancelling another buyer's request ($role)", async (buyer) => {
+    vi.mocked(requests.findPurchaseRequestById).mockResolvedValue(row({ customer_wp_user_id: 2, requester_supplier_id: "another-company" }));
+    await expect(cancelPurchaseRequestFor(buyer, "req")).rejects.toThrow();
+    expect(requests.cancelPurchaseRequest).not.toHaveBeenCalled();
+  });
+  it("notifies the accepted supplier after cancellation", async () => {
+    vi.mocked(requests.findPurchaseRequestById).mockResolvedValue(row({ status: "accepted", accepted_supplier_id: "a" }));
+    vi.mocked(requests.cancelPurchaseRequest).mockResolvedValue(row({ status: "cancelled", accepted_supplier_id: "a" }));
+    await cancelPurchaseRequestFor(customer, "req");
+    expect(insertNotification).toHaveBeenCalledWith(expect.objectContaining({ recipientId: "a", kind: "purchase_cancelled" }));
+  });
+  it("does not repeat cancellation notifications for a cancelled request", async () => {
+    vi.mocked(requests.findPurchaseRequestById).mockResolvedValue(row({ status: "cancelled", accepted_supplier_id: "a" }));
+    await cancelPurchaseRequestFor(customer, "req");
+    expect(insertNotification).not.toHaveBeenCalled();
   });
 });

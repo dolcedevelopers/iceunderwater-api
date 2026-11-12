@@ -3,7 +3,7 @@ import type { SupplierRow } from "./supplierRepo.js";
 import type { RequestLocation } from "../lib/serviceArea.js";
 import type { RowDataPacket } from "mysql2";
 import { execute, query, withTransaction } from "../db/pool.js";
-import { conflict, notFound } from "../lib/errors.js";
+import { accessDenied, conflict, notFound } from "../lib/errors.js";
 
 export type PurchaseRequestStatus =
   | "open"
@@ -296,10 +296,31 @@ export async function markPurchaseRequestPaid(input: {
   return Boolean(result.affectedRows);
 }
 
-export async function markCheckoutStarted(requestId: string): Promise<void> {
-  await execute(
-    `UPDATE iuw_purchase_requests SET status = 'checkout_started'
-     WHERE id = :requestId AND status = 'accepted'`,
-    { requestId },
-  );
+/** Serializes checkout with cancellation so a cancelled request cannot issue a payment link. */
+export async function markCheckoutStarted(requestId: string): Promise<PurchaseRequestRow> {
+  return withTransaction(async (conn) => {
+    const [rows] = await conn.query<PurchaseRequestRow[]>("SELECT * FROM iuw_purchase_requests WHERE id = ? FOR UPDATE", [requestId]);
+    const row = rows[0];
+    if (!row) throw notFound("That request is not available.");
+    if (!row.accepted_supplier_id || !["accepted", "checkout_started"].includes(row.status)) throw conflict("This request can no longer be paid.");
+    await conn.query("UPDATE iuw_purchase_requests SET status = 'checkout_started' WHERE id = ? AND status = 'accepted'", [requestId]);
+    return { ...row, status: "checkout_started" };
+  });
+}
+
+export async function cancelPurchaseRequest(requestId: string, owner: { customerWpUserId: number; supplierId: string | null }): Promise<PurchaseRequestRow> {
+  return withTransaction(async (conn) => {
+    const [rows] = await conn.query<PurchaseRequestRow[]>("SELECT * FROM iuw_purchase_requests WHERE id = ? FOR UPDATE", [requestId]);
+    const row = rows[0];
+    if (!row) throw notFound("That request is not available.");
+    if (owner.supplierId ? row.requester_supplier_id !== owner.supplierId
+      : row.requester_supplier_id != null || Number(row.customer_wp_user_id) !== owner.customerWpUserId) throw accessDenied();
+    if (row.status === "cancelled") return row;
+    if (!["open", "expired", "accepted"].includes(row.status) || row.woo_order_id != null || row.paid_at != null) {
+      throw conflict("Payment has already started or this order is paid. Contact your supplier to arrange cancellation.");
+    }
+    await conn.query("UPDATE iuw_purchase_requests SET status = 'cancelled', checkout_url = '', expires_at = NULL WHERE id = ?", [requestId]);
+    await conn.query("UPDATE iuw_purchase_request_offers SET status = 'missed' WHERE request_id = ? AND status IN ('notified', 'accepted')", [requestId]);
+    return { ...row, status: "cancelled", checkout_url: "", expires_at: null };
+  });
 }
