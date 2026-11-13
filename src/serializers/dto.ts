@@ -79,6 +79,7 @@ export type AdminDto = {
 };
 
 export type TransactionDto = {
+  wooOrderId?: number;
   transactionType?: "sale" | "purchase";
   lineItems?: { productId: number | null; name: string; quantity: number; total: number }[];
   id: string;
@@ -242,6 +243,7 @@ export type EventGroupDto = {
 export function mapTransaction(row: {
   transaction_type?: "sale" | "purchase";
   line_items?: { productId: number | null; name: string; quantity: number; totalCents: number }[];
+  wc_order_id?: number;
   id: string;
   reference: string;
   customer_wp_user_id: number | null;
@@ -259,6 +261,7 @@ export function mapTransaction(row: {
   return {
     ...(row.transaction_type ? { transactionType: row.transaction_type } : {}),
     ...(row.line_items ? { lineItems: row.line_items.map(({ totalCents, ...line }) => ({ ...line, total: centsToRands(totalCents) })) } : {}),
+    ...(row.wc_order_id != null ? { wooOrderId: Number(row.wc_order_id) } : {}),
     id: row.id,
     reference: row.reference,
     customerId: row.customer_wp_user_id != null ? String(row.customer_wp_user_id) : "",

@@ -63,6 +63,11 @@ function iuw_bridge_register_routes() {
 	);
 
 	register_rest_route(
+		'iuw-bridge/v1', '/refund-request',
+		array( 'methods' => 'POST', 'callback' => 'iuw_bridge_refund_request', 'permission_callback' => 'iuw_bridge_authorize' )
+	);
+
+	register_rest_route(
 		'iuw-bridge/v1',
 		'/send-invoice',
 		array(
@@ -539,3 +544,63 @@ add_action( 'woocommerce_checkout_order_processed', function () {
 		WC()->session->__unset( 'iuw_request_id' );
 	}
 } );
+
+/** Request email only: this does not issue a WooCommerce or gateway refund. */
+function iuw_bridge_refund_request( WP_REST_Request $request ) {
+	global $wpdb;
+	$id = sanitize_text_field( (string) $request->get_param( 'requestId' ) );
+	$reason = trim( str_replace( "\0", '', (string) $request->get_param( 'reason' ) ) );
+	if ( $id === '' || strlen( $reason ) < 5 || strlen( $reason ) > 8000 ) {
+		return new WP_Error( 'iuw_refund_invalid', 'Please describe the reason for your refund request.', array( 'status' => 400 ) );
+	}
+	$row = $wpdb->get_row( $wpdb->prepare(
+		"SELECT r.*, s.name AS supplier_name, s.email AS supplier_email FROM iuw_purchase_requests r
+		 INNER JOIN iuw_suppliers s ON s.id = r.accepted_supplier_id WHERE r.id = %s LIMIT 1", $id
+	) );
+	if ( ! $row ) return new WP_Error( 'iuw_refund_missing', 'Request not found.', array( 'status' => 404 ) );
+	$company = (string) $request->get_param( 'requesterSupplierId' );
+	$buyer_id = (int) $request->get_param( 'customerWpUserId' );
+	$owns = ! empty( $row->requester_supplier_id ) ? $company === (string) $row->requester_supplier_id
+		: $company === '' && $buyer_id === (int) $row->customer_wp_user_id;
+	if ( ! $owns ) return new WP_Error( 'iuw_refund_forbidden', 'You cannot request a refund for this order.', array( 'status' => 403 ) );
+	if ( $row->status !== 'paid' || empty( $row->woo_order_id ) || ! function_exists( 'wc_get_order' ) ) {
+		return new WP_Error( 'iuw_refund_unpaid', 'Refund requests require a paid order.', array( 'status' => 400 ) );
+	}
+	$order = wc_get_order( (int) $row->woo_order_id );
+	$items = $order ? array_values( $order->get_items() ) : array();
+	if ( ! $order || ! $order->is_paid() || count( $items ) !== 1
+		|| (int) $items[0]->get_product_id() !== (int) $row->wc_product_id || (int) $items[0]->get_quantity() !== (int) $row->qty ) {
+		return new WP_Error( 'iuw_refund_order', 'The paid order does not match this product request.', array( 'status' => 409 ) );
+	}
+	$to = (string) $row->supplier_email;
+	$reply = (string) $row->customer_email;
+	if ( ! is_email( $to ) || ! is_email( $reply ) || preg_match( '/[\r\n]/', $to . $reply ) ) {
+		return new WP_Error( 'iuw_refund_contact', 'A valid supplier and customer contact email is required.', array( 'status' => 400 ) );
+	}
+	// Atomic claim shared by all API calls/devices. Unknown outcomes are not automatically retried.
+	$claimed = $wpdb->query( $wpdb->prepare(
+		"UPDATE iuw_purchase_requests SET refund_status = 'sending', refund_reason = %s
+		 WHERE id = %s AND status = 'paid' AND (refund_status IS NULL OR refund_status = 'failed')", $reason, $id
+	) );
+	if ( $claimed === false ) return new WP_Error( 'iuw_refund_setup', 'Refund email is not available yet. Please contact the supplier.', array( 'status' => 503 ) );
+	if ( ! $claimed ) {
+		$current = $wpdb->get_row( $wpdb->prepare( 'SELECT refund_status, refund_requested_at FROM iuw_purchase_requests WHERE id = %s', $id ) );
+		if ( $current && $current->refund_status === 'sent' ) return array( 'status' => 'sent', 'to' => $to, 'sentAt' => $current->refund_requested_at, 'alreadySent' => true );
+		return new WP_Error( 'iuw_refund_sending', 'Your refund request is being sent. Check its status before trying again.', array( 'status' => 409 ) );
+	}
+	$number = $row->woo_order_number ? (string) $row->woo_order_number : (string) $row->woo_order_id;
+	$subject = substr( str_replace( array( "\r", "\n" ), ' ', 'Refund request - Order ' . $number . ' - ' . $row->product_name ), 0, 200 );
+	$body = 'Hello ' . $row->supplier_name . ",\n\nI would like to request a refund for:\n\n"
+		. 'Order: ' . $number . ' (Woo ID ' . $row->woo_order_id . ")\n"
+		. 'Product: ' . $row->product_name . ' (Product ID ' . $row->wc_product_id . ")\n"
+		. 'Quantity: ' . $row->qty . "\nPurchase request: " . $row->id . "\nCustomer email: " . $reply . "\n\nReason: " . $reason
+		. "\n\nPlease advise on the next steps for reviewing this refund request and any return requirements.\n\nThank you.";
+	try { $sent = wp_mail( $to, $subject, $body, array( 'Content-Type: text/plain; charset=UTF-8', 'Reply-To: ' . $reply ) ); }
+	catch ( Throwable $failure ) { $sent = false; }
+	if ( ! $sent ) {
+		$wpdb->query( $wpdb->prepare( "UPDATE iuw_purchase_requests SET refund_status = 'failed' WHERE id = %s AND refund_status = 'sending'", $id ) );
+		return new WP_Error( 'iuw_refund_mail', 'The email could not be submitted. Please try again or use your email app.', array( 'status' => 502 ) );
+	}
+	$wpdb->query( $wpdb->prepare( "UPDATE iuw_purchase_requests SET refund_status = 'sent', refund_requested_at = UTC_TIMESTAMP(3) WHERE id = %s", $id ) );
+	return array( 'status' => 'sent', 'to' => $to, 'sentAt' => gmdate( 'c' ), 'alreadySent' => false );
+}

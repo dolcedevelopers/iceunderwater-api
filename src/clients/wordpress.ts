@@ -185,3 +185,9 @@ export async function pingWordpress(): Promise<boolean> {
     return false;
   }
 }
+
+export async function sendRefundRequestEmail(input: { requestId: string; customerWpUserId: number; requesterSupplierId: string | null; reason: string }): Promise<{ status: "sent"; to: string; sentAt: string; alreadySent: boolean }> {
+  return httpJson(`${config.WP_BASE_URL}/wp-json/iuw-bridge/v1/refund-request`, {
+    method: "POST", headers: { "X-IUW-Bridge-Secret": config.WP_BRIDGE_SECRET }, body: input, retries: 0, timeoutMs: 20000,
+  });
+}

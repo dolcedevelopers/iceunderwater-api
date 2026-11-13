@@ -1,3 +1,4 @@
+import { refundPreviewFor, sendRefundRequestFor } from "../services/refundRequestService.js";
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { requireAuth } from "../plugins/auth.js";
@@ -54,6 +55,15 @@ const purchaseRequestRoutes: FastifyPluginAsync = async (app) => {
   app.post<{ Params: { id: string } }>("/purchase-requests/:id/accept", async (request) =>
     acceptPurchaseRequestFor(requireAuth(request), request.params.id, request.ip),
   );
+
+  app.get<{ Params: { id: string } }>("/purchase-requests/:id/refund-request", async (request) =>
+    refundPreviewFor(requireAuth(request), request.params.id),
+  );
+  app.post<{ Params: { id: string } }>("/purchase-requests/:id/refund-request", async (request) => {
+    const principal = requireAuth(request);
+    const body = z.object({ reason: z.string().trim().min(5).max(2000) }).strict().parse(request.body);
+    return sendRefundRequestFor(principal, request.params.id, body.reason);
+  });
 
   app.post<{ Params: { id: string } }>("/purchase-requests/:id/cancel", async (request) =>
     cancelPurchaseRequestFor(requireAuth(request), request.params.id, request.ip),

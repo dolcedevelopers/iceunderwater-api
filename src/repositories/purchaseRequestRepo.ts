@@ -37,6 +37,13 @@ export type PurchaseRequestRow = RowDataPacket & {
   delivery_status?: string | null;
   delivery_at?: Date | null;
   fulfilment_type?: "delivery" | "pickup" | null;
+  refund_status?: "sending" | "sent" | "failed" | null;
+  refund_reason?: string | null;
+  refund_requested_at?: Date | null;
+  supplier_contact_name?: string | null;
+  supplier_contact_email?: string | null;
+  supplier_contact_phone?: string | null;
+  supplier_contact_address?: string | null;
   location_province?: string | null;
   location_city?: string | null;
   location_address?: string | null;
@@ -168,9 +175,15 @@ export async function insertPurchaseOffers(requestId: string, supplierIds: strin
   }
 }
 
+const supplierContactSql = `
+  (SELECT name FROM iuw_suppliers WHERE id = r.accepted_supplier_id) AS supplier_contact_name,
+  (SELECT email FROM iuw_suppliers WHERE id = r.accepted_supplier_id) AS supplier_contact_email,
+  (SELECT phone FROM iuw_suppliers WHERE id = r.accepted_supplier_id) AS supplier_contact_phone,
+  (SELECT address FROM iuw_suppliers WHERE id = r.accepted_supplier_id) AS supplier_contact_address`;
+
 export async function findPurchaseRequestById(id: string): Promise<PurchaseRequestRow | null> {
   const rows = await query<PurchaseRequestRow[]>(
-    `SELECT r.*, (SELECT d.status FROM iuw_deliveries d
+    `SELECT r.*, ${supplierContactSql}, (SELECT d.status FROM iuw_deliveries d
        WHERE d.wc_order_id = r.woo_order_id AND d.supplier_id = r.accepted_supplier_id
          AND d.deleted_at IS NULL ORDER BY d.assigned_at DESC LIMIT 1) AS delivery_status
      FROM iuw_purchase_requests r WHERE id = :id LIMIT 1`,
@@ -207,7 +220,7 @@ export async function listPurchaseRequests(filter: {
     params.supplierId = filter.supplierId;
   }
   return query<PurchaseRequestRow[]>(
-    `SELECT r.*, (SELECT d.status FROM iuw_deliveries d
+    `SELECT r.*, ${supplierContactSql}, (SELECT d.status FROM iuw_deliveries d
        WHERE d.wc_order_id = r.woo_order_id AND d.supplier_id = r.accepted_supplier_id
          AND d.deleted_at IS NULL ORDER BY d.assigned_at DESC LIMIT 1) AS delivery_status
      FROM iuw_purchase_requests r WHERE ${clauses.join(" AND ")} ORDER BY created_at DESC`,

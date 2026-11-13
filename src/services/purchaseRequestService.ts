@@ -68,6 +68,13 @@ function mapRequest(row: PurchaseRequestRow, options: { includeCheckoutUrl?: boo
     deliveryAt: row.delivery_at ? new Date(row.delivery_at).toISOString() : null,
     deliveryTimezone: "Africa/Johannesburg",
     acceptedSupplierId: row.accepted_supplier_id || null,
+    supplierContact: options.includeCheckoutUrl && row.accepted_supplier_id ? {
+      id: row.accepted_supplier_id, name: row.supplier_contact_name || "Supplier",
+      email: row.supplier_contact_email || "", phone: row.supplier_contact_phone || "", address: row.supplier_contact_address || "",
+    } : null,
+    refundRequest: options.includeCheckoutUrl && row.refund_status ? {
+      status: row.refund_status, reason: row.refund_reason || "", sentAt: row.refund_requested_at ? new Date(row.refund_requested_at).toISOString() : null,
+    } : null,
     wooOrderId: row.woo_order_id != null ? Number(row.woo_order_id) : null,
     wooOrderNumber: row.woo_order_number || null,
     checkoutUrl: options.includeCheckoutUrl ? row.checkout_url || "" : "",

@@ -5,7 +5,7 @@ import * as requests from "../src/repositories/purchaseRequestRepo.js";
 import { insertNotification } from "../src/repositories/notificationRepo.js";
 import * as suppliers from "../src/repositories/supplierRepo.js";
 import { createPurchaseRequestFor as createRaw, validateDeliveryAt, listPurchaseSuppliersFor, resendPurchaseRequestFor,
-  cancelPurchaseRequestFor, matchPurchaseSuppliersFor, acceptPurchaseRequestFor, startCheckoutFor, fulfillPurchaseRequestFromOrder } from "../src/services/purchaseRequestService.js";
+  listPurchaseRequestsFor, cancelPurchaseRequestFor, matchPurchaseSuppliersFor, acceptPurchaseRequestFor, startCheckoutFor, fulfillPurchaseRequestFromOrder } from "../src/services/purchaseRequestService.js";
 
 vi.mock("../src/repositories/purchaseRequestRepo.js", () => ({
   cancelPurchaseRequest: vi.fn(), acceptPurchaseRequest: vi.fn(), expireStalePurchaseRequests: vi.fn(), findPurchaseRequestById: vi.fn(),
@@ -232,4 +232,14 @@ describe("buyer cancellation", () => {
     await cancelPurchaseRequestFor(customer, "req");
     expect(insertNotification).not.toHaveBeenCalled();
   });
+});
+
+it("returns supplier refund contacts only to the buyer view", async () => {
+  vi.mocked(requests.listPurchaseRequests).mockResolvedValue([row({ status: "paid", accepted_supplier_id: "a", supplier_contact_name: "Seller", supplier_contact_email: "seller@example.test", refund_status: "sent", refund_reason: "Damaged packaging" })]);
+  const own = await listPurchaseRequestsFor(customer);
+  expect(own[0]?.supplierContact?.email).toBe("seller@example.test");
+  expect(own[0]?.refundRequest?.status).toBe("sent");
+  const incoming = await listPurchaseRequestsFor({ ...company, supplierId: "a" });
+  expect(incoming[0]?.supplierContact).toBeNull();
+  expect(incoming[0]?.refundRequest).toBeNull();
 });
