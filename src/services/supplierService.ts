@@ -1,3 +1,4 @@
+import { selectedCity } from "../lib/serviceArea.js";
 import {
   assertOwnsRecord,
   isAdmin,
@@ -240,23 +241,9 @@ export async function updateSupplierFor(
     province = loc.province;
   }
 
-  const areaChanged = "latitude" in safe || "longitude" in safe || "serviceRadiusKm" in safe;
-  if (areaChanged) {
-    const latitude = safe.latitude === undefined ? existing!.latitude : safe.latitude;
-    const longitude = safe.longitude === undefined ? existing!.longitude : safe.longitude;
-    const radius = safe.serviceRadiusKm === undefined ? existing!.service_radius_km : safe.serviceRadiusKm;
-    const clearing = latitude == null && longitude == null && radius == null;
-    if (!clearing && (latitude == null || longitude == null || radius == null
-      || !Number.isFinite(Number(latitude)) || Math.abs(Number(latitude)) > 90
-      || !Number.isFinite(Number(longitude)) || Math.abs(Number(longitude)) > 180
-      || !Number.isFinite(Number(radius)) || Number(radius) <= 0 || Number(radius) > 99999)) {
-      throw validationError("Confirm your business location and enter a positive service radius.");
-    }
-  }
-  if (typeof safe.address === "string" && safe.address.trim() !== existing!.address && !areaChanged) {
-    safe.latitude = null;
-    safe.longitude = null;
-    safe.serviceRadiusKm = null;
+  if (typeof safe.province === "string") {
+    const place = selectedCity(safe.province, safe.city ?? existing!.city);
+    city = place.city; province = place.province;
   }
 
   const updated = await updateSupplier(scope!, {

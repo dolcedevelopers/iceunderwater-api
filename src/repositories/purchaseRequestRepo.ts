@@ -37,6 +37,8 @@ export type PurchaseRequestRow = RowDataPacket & {
   delivery_status?: string | null;
   delivery_at?: Date | null;
   fulfilment_type?: "delivery" | "pickup" | null;
+  location_province?: string | null;
+  location_city?: string | null;
   location_address?: string | null;
   location_latitude?: number | string | null;
   location_longitude?: number | string | null;
@@ -74,12 +76,12 @@ export async function insertPurchaseRequest(row: {
   await execute(
     `INSERT INTO iuw_purchase_requests
       (id, customer_wp_user_id, customer_email, requester_supplier_id, target_supplier_id,
-       wc_product_id, product_name, qty, delivery_at, fulfilment_type, location_address, location_latitude, location_longitude, status, expires_at)
+       wc_product_id, product_name, qty, delivery_at, fulfilment_type, location_address, location_province, location_city, status, expires_at)
      VALUES
       (:id, :customer_wp_user_id, :customer_email, :requester_supplier_id, :target_supplier_id,
-       :wc_product_id, :product_name, :qty, :delivery_at, :fulfilmentType, :locationAddress, :latitude, :longitude, 'open',
+       :wc_product_id, :product_name, :qty, :delivery_at, :fulfilmentType, :locationAddress, :province, :city, 'open',
        LEAST(:delivery_at, DATE_ADD(UTC_TIMESTAMP(3), INTERVAL ${windowMinutes} MINUTE)))`,
-    { ...row, fulfilmentType: row.location.fulfilmentType, locationAddress: row.location.address, latitude: row.location.latitude, longitude: row.location.longitude },
+    { ...row, fulfilmentType: row.location.fulfilmentType, locationAddress: row.location.address, province: row.location.province, city: row.location.city },
   );
   const created = await findPurchaseRequestById(row.id);
   if (!created) throw new Error("purchase request insert failed");
@@ -125,8 +127,8 @@ export async function resendPurchaseRequest(input: {
             delivery_at = :deliveryAt,
             fulfilment_type = :fulfilmentType,
             location_address = :locationAddress,
-            location_latitude = :latitude,
-            location_longitude = :longitude,
+            location_province = :province,
+            location_city = :city,
             target_supplier_id = :targetSupplierId,
             status = 'open',
             accepted_supplier_id = NULL,
@@ -137,8 +139,8 @@ export async function resendPurchaseRequest(input: {
       WHERE id = :requestId AND status IN ('open', 'expired')`,
     { ...input, fulfilmentType: input.location?.fulfilmentType ?? locked[0].fulfilment_type,
       locationAddress: input.location?.address ?? locked[0].location_address,
-      latitude: input.location?.latitude ?? locked[0].location_latitude,
-      longitude: input.location?.longitude ?? locked[0].location_longitude },
+      province: input.location?.province ?? locked[0].location_province,
+      city: input.location?.city ?? locked[0].location_city },
   );
   await conn.query(`DELETE FROM iuw_purchase_request_offers WHERE request_id = :requestId`, {
     requestId: input.requestId,

@@ -1,5 +1,5 @@
 import { listStockingSupplierIds } from "../repositories/productRepo.js";
-import { requestLocation, supplierServesLocation, distanceKm, type RequestLocation } from "../lib/serviceArea.js";
+import { requestLocation, supplierServesLocation, type RequestLocation } from "../lib/serviceArea.js";
 import {
   canCreatePurchaseRequests,
   isAdmin,
@@ -61,8 +61,8 @@ function mapRequest(row: PurchaseRequestRow, options: { includeCheckoutUrl?: boo
     qty: Number(row.qty),
     status: row.status,
     deliveryStatus: row.delivery_status || null,
-    location: row.location_address && row.location_latitude != null && row.location_longitude != null ? {
-      address: row.location_address, latitude: Number(row.location_latitude), longitude: Number(row.location_longitude),
+    location: row.location_address ? {
+      address: row.location_address, province: row.location_province || "", city: row.location_city || "",
       fulfilmentType: row.fulfilment_type || "delivery",
     } : null,
     deliveryAt: row.delivery_at ? new Date(row.delivery_at).toISOString() : null,
@@ -161,7 +161,7 @@ export async function matchPurchaseSuppliersFor(session: SessionLike, data: {
     allAvailable: matches.length > 0 && matches.every((group) => group.length > 0),
     suppliers: common.map((supplier) => ({ id: supplier.id, name: supplier.name, city: supplier.city,
       previous: Boolean(history.find((entry) => entry.id === supplier.id)?.previous),
-      distanceKm: Math.round(distanceKm({ latitude: Number(supplier.latitude), longitude: Number(supplier.longitude) }, location) * 10) / 10 })),
+      province: supplier.province })),
   };
 }
 
@@ -169,7 +169,7 @@ async function targetsForSelection(session: SessionLike, wcProductId: number, qt
   const suppliers = await eligibleSuppliers(session, wcProductId, qty, location);
   if (targetSupplierId) {
     if (!suppliers.some((row) => row.id === targetSupplierId)) {
-      throw validationError("This supplier does not have enough stock of the product or does not serve the chosen location.");
+      throw validationError("This supplier does not have enough stock of the product or is not in the selected city.");
     }
     return [targetSupplierId];
   }
@@ -190,7 +190,7 @@ async function notifySuppliers(input: {
       recipientKind: "supplier",
       recipientId: supplierId,
       title: "New product request",
-      body: `${buyerLabel(input.requesterSupplierId)} wants ${input.qty} × ${input.productName}. ${input.location.fulfilmentType === "pickup" ? "Pickup" : "Delivery"} requested: ${input.deliveryAt.toLocaleString("en-ZA", { timeZone: "Africa/Johannesburg", dateStyle: "medium", timeStyle: "short" })} SAST. ${input.location.fulfilmentType === "pickup" ? "Pickup search area" : "Delivery address"}: ${input.location.address}. Accept to open checkout.`,
+      body: `${buyerLabel(input.requesterSupplierId)} wants ${input.qty} × ${input.productName}. ${input.location.fulfilmentType === "pickup" ? "Pickup" : "Delivery"} requested: ${input.deliveryAt.toLocaleString("en-ZA", { timeZone: "Africa/Johannesburg", dateStyle: "medium", timeStyle: "short" })} SAST. ${input.location.fulfilmentType === "pickup" ? "Pickup search area" : "Delivery address"}: ${input.location.address}, ${input.location.city}, ${input.location.province}. Accept to open checkout.`,
       kind: "purchase_request",
       refType: "purchase_request",
       refId: input.requestId,
@@ -225,8 +225,8 @@ export async function createPurchaseRequestFor(
   if (!supplierIds.length) {
     throw validationError(
       requester.supplierId
-        ? "No other companies have enough stock within range of this address."
-        : "No suppliers currently have enough stock of this product within range of the chosen address.",
+        ? "No other companies have enough stock in the selected city."
+        : "No suppliers currently have enough stock of this product in the selected city.",
     );
   }
 
@@ -322,7 +322,7 @@ export async function acceptPurchaseRequestFor(session: SessionLike, id: string,
       const location = requestLocation(mapRequest(current).location);
       const stocking = await listStockingSupplierIds(Number(current.wc_product_id), Number(current.qty), connection);
       if (!stocking.includes(scope) || !supplierServesLocation(supplier, location)) {
-        throw validationError("The product stock or service area has changed. This request can no longer be accepted.");
+        throw validationError("The product stock or supplier city has changed. This request can no longer be accepted.");
       }
     },
   );
@@ -400,8 +400,8 @@ export async function resendPurchaseRequestFor(
   if (!supplierIds.length) {
     throw validationError(
       requester.supplierId
-        ? "No other companies have enough stock within range of this address."
-        : "No suppliers currently have enough stock of this product within range of the chosen address.",
+        ? "No other companies have enough stock in the selected city."
+        : "No suppliers currently have enough stock of this product in the selected city.",
     );
   }
 

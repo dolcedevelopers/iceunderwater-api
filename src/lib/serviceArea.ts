@@ -1,40 +1,28 @@
+import { findCity } from "../data/saLocations.js";
 import { validationError } from "./errors.js";
 
-export type RequestLocation = {
-  address: string;
-  latitude: number;
-  longitude: number;
-  fulfilmentType: "delivery" | "pickup";
-};
-
+export type RequestLocation = { address: string; province: string; city: string; fulfilmentType: "delivery" | "pickup" };
+const aliases: Record<string, string> = { "port elizabeth": "Gqeberha", "nelspruit": "Mbombela", "witbank": "eMalahleni" };
+export function selectedCity(province: unknown, city: unknown) {
+  if (typeof province !== "string" || typeof city !== "string") throw validationError("Select a province and a city.");
+  const found = findCity(city);
+  if (!found || found.province.toLowerCase() !== province.trim().toLowerCase()) throw validationError("Select a city in the chosen province.");
+  return { province: found.province, city: aliases[found.city.toLowerCase()] || found.city };
+}
 export function requestLocation(value: unknown): RequestLocation {
   const location = value as Partial<RequestLocation> | null;
-  if (!location || typeof location.address !== "string" || !location.address.trim()
-    || location.address.trim().length > 512
-    || typeof location.latitude !== "number" || !Number.isFinite(location.latitude) || Math.abs(location.latitude) > 90
-    || typeof location.longitude !== "number" || !Number.isFinite(location.longitude) || Math.abs(location.longitude) > 180
-    || !["delivery", "pickup"].includes(location.fulfilmentType || "")) {
-    throw validationError("Confirm the delivery or pickup address and its location on the map.");
-  }
-  return { address: location.address.trim(), latitude: location.latitude, longitude: location.longitude,
-    fulfilmentType: location.fulfilmentType as RequestLocation["fulfilmentType"] };
+  if (!location || !["delivery", "pickup"].includes(location.fulfilmentType || "")) throw validationError("Choose delivery or collection.");
+  const place = selectedCity(location.province, location.city);
+  const address = typeof location.address === "string" ? location.address.trim() : "";
+  if (address.length > 512 || (location.fulfilmentType === "delivery" && !address)) throw validationError("Enter your delivery street address.");
+  return { ...place, address: address || `${place.city}, ${place.province}`, fulfilmentType: location.fulfilmentType as RequestLocation["fulfilmentType"] };
 }
-
-export function distanceKm(first: { latitude: number; longitude: number }, second: { latitude: number; longitude: number }): number {
-  const radians = (degrees: number) => degrees * Math.PI / 180;
-  const latitude = radians(second.latitude - first.latitude);
-  const longitude = radians(second.longitude - first.longitude);
-  const a = Math.sin(latitude / 2) ** 2
-    + Math.cos(radians(first.latitude)) * Math.cos(radians(second.latitude)) * Math.sin(longitude / 2) ** 2;
-  return 6371.0088 * 2 * Math.atan2(Math.sqrt(Math.min(1, a)), Math.sqrt(Math.max(0, 1 - a)));
-}
-
-export function supplierServesLocation(supplier: { latitude?: unknown; longitude?: unknown; service_radius_km?: unknown }, location: RequestLocation): boolean {
-  if (supplier.latitude == null || supplier.longitude == null || supplier.service_radius_km == null) return false;
-  const latitude = Number(supplier.latitude);
-  const longitude = Number(supplier.longitude);
-  const radius = Number(supplier.service_radius_km);
-  if (!Number.isFinite(latitude) || Math.abs(latitude) > 90 || !Number.isFinite(longitude)
-    || Math.abs(longitude) > 180 || !Number.isFinite(radius) || radius <= 0) return false;
-  return distanceKm({ latitude, longitude }, location) <= radius;
+export function supplierServesLocation(supplier: { city?: unknown; province?: unknown }, location: RequestLocation): boolean {
+  if (typeof supplier.city !== "string") return false;
+  const known = findCity(supplier.city);
+  if (!known) return false;
+  try {
+    const place = selectedCity(supplier.province || known.province, supplier.city);
+    return place.province === location.province && place.city === location.city;
+  } catch { return false; }
 }

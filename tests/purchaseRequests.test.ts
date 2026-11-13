@@ -18,14 +18,14 @@ vi.mock("../src/repositories/auditRepo.js", () => ({ writeAudit: vi.fn() }));
 vi.mock("../src/repositories/notificationRepo.js", () => ({ insertNotification: vi.fn() }));
 vi.mock("../src/clients/woocommerce.js", () => ({ getWcProduct: vi.fn(async () => ({ name: "Water" })) }));
 
-const location = { address: "Johannesburg", latitude: -26.2041, longitude: 28.0473, fulfilmentType: "delivery" as const };
+const location = { address: "Johannesburg", province: "Gauteng", city: "Johannesburg", fulfilmentType: "delivery" as const };
 const deliveryAt = new Date(Date.now() + 86400000).toISOString();
 const createPurchaseRequestFor: typeof createRaw = (session, data, ip) => createRaw(session, { deliveryAt, location, ...data }, ip);
 const customer: Principal = { sub: 1, wpUserId: 1, role: "customer", email: "buyer@example.com" };
 const company: Principal = { ...customer, role: "supplier", supplierId: "own" };
 function row(changes: Record<string, unknown> = {}) {
   return { id: "req", customer_wp_user_id: 1, customer_email: customer.email, requester_supplier_id: null,
-    location_address: location.address, location_latitude: location.latitude, location_longitude: location.longitude, fulfilment_type: location.fulfilmentType, delivery_at: new Date(deliveryAt), target_supplier_id: null, wc_product_id: 5, product_name: "Water", qty: 2, status: "open",
+    location_address: location.address, location_province: location.province, location_city: location.city, fulfilment_type: location.fulfilmentType, delivery_at: new Date(deliveryAt), target_supplier_id: null, wc_product_id: 5, product_name: "Water", qty: 2, status: "open",
     accepted_supplier_id: null, checkout_url: "", created_at: new Date(), ...changes } as requests.PurchaseRequestRow;
 }
 
@@ -33,9 +33,9 @@ beforeEach(() => {
   vi.resetAllMocks();
   vi.mocked(listStockingSupplierIds).mockResolvedValue(["own", "a", "b"]);
   vi.mocked(suppliers.listSuppliers).mockResolvedValue([
-    { id: "own", name: "Own", city: "JHB" }, { id: "a", name: "A", city: "JHB" },
-    { id: "b", name: "B", city: "Cape Town" },
-  ].map((supplier) => ({ ...supplier, latitude: location.latitude, longitude: location.longitude, service_radius_km: 25 })) as never);
+    { id: "own", name: "Own", city: "Johannesburg" }, { id: "a", name: "A", city: "Johannesburg" },
+    { id: "b", name: "B", city: "Johannesburg" },
+  ].map((supplier) => ({ ...supplier, province: "Gauteng" })) as never);
   vi.mocked(requests.listPurchaseRequests).mockResolvedValue([]);
   vi.mocked(requests.findPurchaseRequestById).mockResolvedValue(row());
   vi.mocked(requests.insertPurchaseRequest).mockImplementation(async (input) => row(input));
@@ -162,13 +162,13 @@ describe("requested delivery schedule", () => {
 });
 
 
-describe("stock and supplier-defined service radius", () => {
-  it("notifies only exact-product stock owners within range", async () => {
+describe("stock and selected supplier city", () => {
+  it("notifies only exact-product stock owners in the selected city", async () => {
     vi.mocked(listStockingSupplierIds).mockResolvedValue(["a", "b"]);
     vi.mocked(suppliers.listSuppliers).mockResolvedValue([
-      { id: "a", latitude: location.latitude, longitude: location.longitude, service_radius_km: 10 },
-      { id: "b", latitude: -33.925, longitude: 18.424, service_radius_km: 20 },
-      { id: "nearby-non-owner", latitude: location.latitude, longitude: location.longitude, service_radius_km: 50 },
+      { id: "a", city: "Johannesburg", province: "Gauteng" },
+      { id: "b", city: "Pretoria", province: "Gauteng" },
+      { id: "nearby-non-owner", city: "Johannesburg", province: "Gauteng" },
     ] as never);
     await createPurchaseRequestFor(customer, { wcProductId: 5, qty: 4 });
     expect(listStockingSupplierIds).toHaveBeenCalledWith(5, 4);
@@ -176,7 +176,7 @@ describe("stock and supplier-defined service radius", () => {
     expect(insertNotification).toHaveBeenCalledTimes(1);
     expect(insertNotification).toHaveBeenCalledWith(expect.objectContaining({ recipientId: "a" }));
   });
-  it("fails closed for unavailable stock or unconfigured service area", async () => {
+  it("fails closed for unavailable stock or unconfigured city", async () => {
     vi.mocked(listStockingSupplierIds).mockResolvedValue([]);
     await expect(createPurchaseRequestFor(customer, { wcProductId: 5 })).rejects.toThrow();
     vi.mocked(listStockingSupplierIds).mockResolvedValue(["a"]);
@@ -190,15 +190,15 @@ describe("stock and supplier-defined service radius", () => {
     expect(result.allAvailable).toBe(true);
     expect(result.suppliers).toEqual([]);
   });
-  it("uses the pickup search address and rejects a selected supplier outside its range", async () => {
+  it("uses the pickup search address and rejects a selected supplier outside the selected city", async () => {
     await createPurchaseRequestFor(customer, { wcProductId: 5, location: { ...location, fulfilmentType: "pickup" }, targetSupplierId: "a" });
     expect(insertNotification).toHaveBeenCalledWith(expect.objectContaining({ body: expect.stringContaining("Pickup search area: Johannesburg") }));
-    await expect(createPurchaseRequestFor(customer, { wcProductId: 5, location: { ...location, latitude: -33.9 }, targetSupplierId: "a" })).rejects.toThrow();
+    await expect(createPurchaseRequestFor(customer, { wcProductId: 5, location: { ...location, city: "Pretoria" }, targetSupplierId: "a" })).rejects.toThrow();
   });
-  it("rechecks locked request stock and the supplier's current radius on acceptance", async () => {
+  it("rechecks locked request stock and the supplier's current city on acceptance", async () => {
     vi.mocked(requests.acceptPurchaseRequest).mockImplementation(async (...args) => {
       const validate = args[3]!;
-      await validate(row({ qty: 9 }), { id: "a", latitude: location.latitude, longitude: location.longitude, service_radius_km: 1 } as never, {} as never);
+      await validate(row({ qty: 9 }), { id: "a", city: "Johannesburg", province: "Gauteng" } as never, {} as never);
       return row({ status: "accepted", accepted_supplier_id: "a" });
     });
     vi.mocked(listStockingSupplierIds).mockResolvedValue([]);

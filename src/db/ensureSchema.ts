@@ -66,6 +66,8 @@ export async function ensureLiveSchemaOnConnection(conn: SchemaConn): Promise<st
   await addColumn(conn, "iuw_suppliers", "longitude", "DECIMAL(10,7) NULL", applied);
   await addColumn(conn, "iuw_suppliers", "service_radius_km", "DECIMAL(7,2) NULL", applied);
   await addColumn(conn, "iuw_purchase_requests", "fulfilment_type", "VARCHAR(16) NULL", applied);
+  await addColumn(conn, "iuw_purchase_requests", "location_province", "VARCHAR(80) NULL", applied);
+  await addColumn(conn, "iuw_purchase_requests", "location_city", "VARCHAR(120) NULL", applied);
   await addColumn(conn, "iuw_purchase_requests", "location_address", "VARCHAR(512) NULL", applied);
   await addColumn(conn, "iuw_purchase_requests", "location_latitude", "DECIMAL(10,7) NULL", applied);
   await addColumn(conn, "iuw_purchase_requests", "location_longitude", "DECIMAL(10,7) NULL", applied);

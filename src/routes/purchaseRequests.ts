@@ -15,8 +15,8 @@ import {
 } from "../services/purchaseRequestService.js";
 
 const locationSchema = z.object({
-  address: z.string().trim().min(1).max(512), latitude: z.number().min(-90).max(90),
-  longitude: z.number().min(-180).max(180), fulfilmentType: z.enum(["delivery", "pickup"]),
+  address: z.string().trim().max(512), province: z.string().trim().min(1).max(80),
+  city: z.string().trim().min(1).max(120), fulfilmentType: z.enum(["delivery", "pickup"]),
 }).strict();
 
 const createSchema = z
