@@ -27,6 +27,7 @@
     "@fastify/rate-limit": "^10.3.0",
     "@fastify/swagger": "^9.5.1",
     "@fastify/swagger-ui": "^5.2.2",
+    "@types/pdfkit": "^0.17.7",
     "argon2": "^0.43.0",
     "dotenv": "^16.5.0",
     "fastify": "^5.3.3",
@@ -39,7 +40,6 @@
   },
   "devDependencies": {
     "@types/node": "^22.15.21",
-    "@types/pdfkit": "^0.17.7",
     "tsx": "^4.19.4",
     "typescript": "^5.8.3",
     "vitest": "^3.1.4"

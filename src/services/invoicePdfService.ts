@@ -9,7 +9,7 @@ type InvoiceLine={name:string;quantity:number;line_total_cents:number};
 export function renderInvoicePdf(invoice:TransactionDto,lines:InvoiceLine[]):Promise<Buffer> {
   return new Promise((resolve,reject)=>{
     const doc=new PDFDocument({size:"A4",margin:48,bufferPages:true,info:{Title:`ICE UNDERWATER Invoice ${invoice.reference}`,Author:"ICE UNDERWATER"}});
-    const chunks:Buffer[]=[];doc.on("data",chunk=>chunks.push(chunk));doc.on("end",()=>resolve(Buffer.concat(chunks)));doc.on("error",reject);
+    const chunks:Buffer[]=[];doc.on("data",(chunk: Buffer)=>chunks.push(chunk));doc.on("end",()=>resolve(Buffer.concat(chunks)));doc.on("error",reject);
     const money=(n:number)=>`R ${n.toFixed(2)}`;
     doc.font("Helvetica-Bold").fontSize(22).fillColor("#132a43").text("ICE UNDERWATER");doc.moveDown(.3);
     doc.fontSize(16).text(`Invoice / receipt ${invoice.reference}`);doc.font("Helvetica").fontSize(10).fillColor("#4c6075").text(`Order ID: ${invoice.wooOrderId || invoice.reference}    Payment status: ${invoice.status.toUpperCase()}`);
