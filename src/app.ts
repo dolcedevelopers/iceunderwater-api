@@ -22,6 +22,7 @@ import locationRoutes from "./routes/locations.js";
 import purchaseRequestRoutes from "./routes/purchaseRequests.js";
 import notificationRoutes from "./routes/notifications.js";
 import { pingDb } from "./db/pool.js";
+import { featureSchemaReady } from "./db/featureSchema.js";
 import { pingWooCommerce } from "./clients/woocommerce.js";
 import { pingWordpress } from "./clients/wordpress.js";
 
@@ -82,15 +83,21 @@ export async function buildApp() {
   await app.register(authPlugin);
 
   /** Liveness for Render — always 200 once the process is up. */
-  app.get("/live", async () => ({ status: "ok", time: new Date().toISOString() }));
+  app.get("/live", async () => ({ status: "ok", release: "0.2.21-schema.1", time: new Date().toISOString() }));
+
+  app.get("/ready", async (_request, reply) => {
+    const [database,schema] = await Promise.all([pingDb(),featureSchemaReady()]);
+    return reply.code(database && schema ? 200 : 503).send({status:database && schema ? "ok" : "not_ready",database,schema});
+  });
 
   /** Deep health — DB + WordPress + Woo. Used for ops, not the platform probe. */
   app.get("/health", async () => {
-    const [db, wp, woo] = await Promise.all([pingDb(), pingWordpress(), pingWooCommerce()]);
-    const ok = db && wp;
+    const [db, wp, woo, schema] = await Promise.all([pingDb(), pingWordpress(), pingWooCommerce(), featureSchemaReady()]);
+    const ok = db && wp && schema;
     return {
       status: ok ? "ok" : "degraded",
       db,
+      schema,
       wordpress: wp,
       woocommerce: woo,
       time: new Date().toISOString(),

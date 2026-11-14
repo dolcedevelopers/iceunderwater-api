@@ -8,7 +8,7 @@ async function main() {
   const repaired = await ensureLiveSchema();
   const app = await buildApp();
   if (repaired.length) {
-    app.log.warn({ repaired }, "Applied missing invoice/request columns on the live database");
+    app.log.warn({ repaired }, "Repaired and verified schema on the runtime database before starting workers");
   }
   await seedFirstOwnerIfConfigured(app.log);
   const stopWorker=startDeliveryWorker(error=>app.log.error({err:error},"Delivery worker failed"));

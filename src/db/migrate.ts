@@ -5,6 +5,7 @@ import mysql from "mysql2/promise";
 import { config } from "../config.js";
 import { parseDatabaseUrl } from "./connectionOptions.js";
 import { ensureLiveSchemaOnConnection } from "./ensureSchema.js";
+import { ensureDeliverySchemaOnConnection } from "./featureSchema.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const migrationsDir = path.resolve(__dirname, "../../migrations");
@@ -34,9 +35,15 @@ async function applyFileMigrations(conn: mysql.Connection): Promise<void> {
     );
     if (existing[0]) continue;
 
-    const sql = await readFile(path.join(migrationsDir, file), "utf8");
-    for (const statement of splitStatements(sql)) {
-      await conn.query(statement);
+    if (id === "017_delivery_handover") {
+      // Startup may already have repaired some columns, or an earlier ALTER
+      // may have succeeded without the migration ledger being written.
+      await ensureDeliverySchemaOnConnection(conn);
+    } else {
+      const sql = await readFile(path.join(migrationsDir, file), "utf8");
+      for (const statement of splitStatements(sql)) {
+        await conn.query(statement);
+      }
     }
     await conn.execute("INSERT IGNORE INTO iuw_schema_migrations (id) VALUES (?)", [id]);
     console.log(`Applied ${id}`);
