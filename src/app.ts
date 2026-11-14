@@ -17,6 +17,7 @@ import adminRoutes from "./routes/admin.js";
 import transactionRoutes from "./routes/transactions.js";
 import webhookRoutes from "./routes/webhooks.js";
 import eventGroupRoutes from "./routes/eventGroups.js";
+import eventRsvpRoutes from "./routes/eventRsvps.js";
 import locationRoutes from "./routes/locations.js";
 import purchaseRequestRoutes from "./routes/purchaseRequests.js";
 import notificationRoutes from "./routes/notifications.js";
@@ -105,6 +106,7 @@ export async function buildApp() {
   await app.register(transactionRoutes);
   await app.register(webhookRoutes);
   await app.register(eventGroupRoutes);
+  await app.register(eventRsvpRoutes);
   await app.register(locationRoutes);
   await app.register(purchaseRequestRoutes);
   await app.register(notificationRoutes);

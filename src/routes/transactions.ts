@@ -1,3 +1,4 @@
+import { invoicePdfFor } from "../services/invoicePdfService.js";
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { requireAuth } from "../plugins/auth.js";
@@ -16,6 +17,7 @@ const patchSchema = z
   .strict();
 
 const transactionRoutes: FastifyPluginAsync = async (app) => {
+  app.get<{Params:{id:string}}>("/invoices/:id/pdf",request=>invoicePdfFor(requireAuth(request),request.params.id));
   app.get<{ Querystring: { supplierId?: string; reference?: string } }>("/transactions", async (request) =>
     listTransactionsFor(requireAuth(request), {
       supplierId: request.query.supplierId,

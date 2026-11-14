@@ -1,3 +1,4 @@
+import { deliveryAction, deliveriesFor } from "./deliveryWorkflowService.js";
 import {
   assertOwnsRecord,
   isAdmin,
@@ -13,6 +14,8 @@ import {
 import { accessDenied, validationError } from "../lib/errors.js";
 import { makeId, normalizeEmail } from "../lib/ids.js";
 import { hashPassword } from "../auth/password.js";
+import { query } from "../db/pool.js";
+import type { RowDataPacket } from "mysql2";
 import { mapDriver } from "../serializers/dto.js";
 import { writeAudit } from "../repositories/auditRepo.js";
 import {
@@ -52,6 +55,7 @@ export async function createDriverFor(
   if (!scope) throw accessDenied("Choose which supplier this driver belongs to.");
   if (!data.name?.trim()) throw validationError("Driver name is required.");
 
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.email||"") || (data.phone||"").replace(/\D/g,"").length<6 || (data.password||"").length<8) throw validationError("Enter a valid driver email, phone number and an app password of at least eight characters.");
   const row = await insertDriver({
     id: makeId("drv"),
     supplier_id: scope,
@@ -78,6 +82,12 @@ export async function updateDriverFor(
 ) {
   const existing = await findDriverById(driverId);
   assertOwnsRecord(session, existing ? { supplierId: existing.supplier_id } : null, "driver");
+  if(typeof changes.phone==="string" && changes.phone.replace(/\D/g,"").length<6)throw validationError("Enter a valid driver phone number.");
+  if(typeof changes.email==="string" && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(changes.email))throw validationError("Enter a valid driver email.");
+  if(changes.status==="available" || changes.active===false) {
+    const runs=await query<RowDataPacket[]>("SELECT id FROM iuw_deliveries WHERE driver_id=:id AND deleted_at IS NULL AND status IN ('assigned','en-route','nearby','arrived') LIMIT 1",{id:driverId});
+    if(runs.length)throw validationError("This driver still has an active delivery. Complete or resolve it before changing availability.");
+  }
   const updated = await updateDriver(driverId, {
     name: typeof changes.name === "string" ? changes.name : undefined,
     phone: typeof changes.phone === "string" ? changes.phone : undefined,
@@ -100,6 +110,8 @@ export async function updateDriverFor(
 export async function deleteDriverFor(session: SessionLike, driverId: string, ip?: string) {
   const existing = await findDriverById(driverId);
   assertOwnsRecord(session, existing ? { supplierId: existing.supplier_id } : null, "driver");
+  const runs=await query<RowDataPacket[]>("SELECT id FROM iuw_deliveries WHERE driver_id=:id AND deleted_at IS NULL AND status IN ('assigned','en-route','nearby','arrived') LIMIT 1",{id:driverId});
+  if(runs.length)throw validationError("This driver still has an active delivery and cannot be removed.");
   await softDeleteDriver(driverId);
   await writeAudit({ session, action: "driver.delete", targetType: "driver", targetId: driverId, ip });
   return { id: driverId };
@@ -156,7 +168,7 @@ export async function trackDriver(session: SessionLike, driverId: string) {
     };
   }
 
-  if (isCustomer(session)) {
+  if (isCustomer(session) || isSupplier(session)) {
     const active = await findActiveDeliveryForDriverCustomer(driverId, {
       wpUserId: session!.wpUserId,
       email: identityEmail(session),
@@ -176,15 +188,7 @@ export async function trackDriver(session: SessionLike, driverId: string) {
   throw accessDenied("That driver is not available.");
 }
 
-export async function listDeliveriesFor(session: SessionLike) {
-  if (isAdmin(session)) return listDeliveries({});
-  if (isSupplier(session)) return listDeliveries({ supplierId: resolveSupplierScope(session) });
-  if (isDriver(session)) return listDeliveries({ driverId: session!.driverId });
-  if (isCustomer(session)) {
-    return listDeliveries({ customerWpUserId: session!.wpUserId, customerEmail: identityEmail(session) });
-  }
-  throw accessDenied();
-}
+export async function listDeliveriesFor(session: SessionLike) { return deliveriesFor(session); }
 
 export async function assignDelivery(
   session: SessionLike,
@@ -207,7 +211,6 @@ export async function assignDelivery(
     customer_wp_user_id: transaction.customer_wp_user_id,
     customer_email: transaction.customer_email,
   });
-  await updateDriver(driver!.id, { status: "on-delivery" });
   await writeAudit({
     session,
     action: "delivery.assign",
@@ -220,27 +223,8 @@ export async function assignDelivery(
 }
 
 export async function patchDelivery(session: SessionLike, deliveryId: string, status: string, ip?: string) {
-  requireRole(session, ROLES.ADMIN, ROLES.SUPPLIER, ROLES.DRIVER);
-  const existing = await findDeliveryById(deliveryId);
-  if (!existing) throw accessDenied("That delivery is not available.");
-  if (isSupplier(session) && existing.supplier_id !== session?.supplierId) {
-    throw accessDenied("That delivery is not available.");
-  }
-  if (isDriver(session) && existing.driver_id !== session?.driverId) {
-    throw accessDenied("That delivery is not available.");
-  }
-  const updated = await updateDeliveryStatus(deliveryId, status);
-  if (status === "delivered") await updateDriver(existing.driver_id, { status: "available" });
-  await writeAudit({
-    session,
-    action: "delivery.update",
-    targetType: "delivery",
-    targetId: deliveryId,
-    ip,
-    before: existing,
-    after: updated,
-  });
-  return updated;
+  if (status !== "en-route") throw validationError("Use the delivery actions. Only the purchasing customer can confirm receipt.");
+  return deliveryAction(session,deliveryId,"start");
 }
 
 function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): number {

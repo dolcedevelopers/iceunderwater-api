@@ -1,5 +1,6 @@
+import { validationError } from "../lib/errors.js";
 import type { RowDataPacket } from "mysql2";
-import { execute, query } from "../db/pool.js";
+import { execute, query, withTransaction } from "../db/pool.js";
 
 export type DriverRow = RowDataPacket & {
   id: string;
@@ -99,12 +100,24 @@ export async function updateDriver(
     params[key] = value;
   }
   if (!fields.length) return findDriverById(id);
-  await execute(`UPDATE iuw_drivers SET ${fields.join(", ")} WHERE id = :id AND deleted_at IS NULL`, params);
+  await withTransaction(async conn=>{
+    await conn.query("SELECT id FROM iuw_drivers WHERE id=? AND deleted_at IS NULL FOR UPDATE",[id]);
+    if(changes.status==="available"||changes.active===false) {
+      const [runs]=await conn.query<RowDataPacket[]>("SELECT id FROM iuw_deliveries WHERE driver_id=? AND deleted_at IS NULL AND status IN ('assigned','en-route','nearby','arrived') LIMIT 1",[id]);
+      if(runs.length)throw validationError("This driver still has an active delivery. Complete it before changing availability.");
+    }
+    await conn.query(`UPDATE iuw_drivers SET ${fields.join(", ")} WHERE id = :id AND deleted_at IS NULL`,params as never);
+  });
   return findDriverById(id);
 }
 
 export async function softDeleteDriver(id: string): Promise<void> {
-  await execute(`UPDATE iuw_drivers SET deleted_at = UTC_TIMESTAMP(3) WHERE id = :id AND deleted_at IS NULL`, { id });
+  await withTransaction(async conn=>{
+    await conn.query("SELECT id FROM iuw_drivers WHERE id=? AND deleted_at IS NULL FOR UPDATE",[id]);
+    const [runs]=await conn.query<RowDataPacket[]>("SELECT id FROM iuw_deliveries WHERE driver_id=? AND deleted_at IS NULL AND status IN ('assigned','en-route','nearby','arrived') LIMIT 1",[id]);
+    if(runs.length)throw validationError("This driver still has an active delivery and cannot be removed.");
+    await conn.query("UPDATE iuw_drivers SET deleted_at=UTC_TIMESTAMP(3) WHERE id=? AND deleted_at IS NULL",[id]);
+  });
 }
 
 export async function insertDriverPing(row: {

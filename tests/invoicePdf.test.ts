@@ -1,0 +1,12 @@
+import { beforeEach,expect,it,vi } from "vitest";
+import { invoicePdfFor,renderInvoicePdf } from "../src/services/invoicePdfService.js";
+import { getTransactionFor } from "../src/services/transactionService.js";
+import { query } from "../src/db/pool.js";
+import type { TransactionDto } from "../src/serializers/dto.js";
+vi.mock("../src/services/transactionService.js",()=>({getTransactionFor:vi.fn()}));
+vi.mock("../src/db/pool.js",()=>({query:vi.fn()}));
+const invoice={id:"tx",wooOrderId:1234,reference:"1234",createdAt:"2026-11-14T08:00:00Z",supplierName:"Crystal Ice",supplierAddress:"Johannesburg",customerEmail:"buyer@example.test",customerName:"Example Buyer",items:4,total:110,status:"paid",supplierId:"supplier-a"} as TransactionDto;
+beforeEach(()=>vi.resetAllMocks());
+it("generates a valid PDF for long item descriptions and multiple pages",async()=>{const pdf=await renderInvoicePdf(invoice,Array.from({length:80},()=>({name:"5kg Party Ice Bag - a detailed product name",quantity:4,line_total_cents:11000})));expect(pdf.subarray(0,5).toString()).toBe("%PDF-");expect(pdf.length).toBeGreaterThan(3000);});
+it("checks invoice ownership before reading any invoice lines",async()=>{vi.mocked(getTransactionFor).mockRejectedValue(new Error("denied"));await expect(invoicePdfFor(null,"foreign")).rejects.toThrow("denied");expect(query).not.toHaveBeenCalled();});
+it("scopes supplier sale PDFs to their own lines and returns a safe filename",async()=>{vi.mocked(getTransactionFor).mockResolvedValue({...invoice,reference:"../1234",transactionType:"sale"});vi.mocked(query).mockResolvedValue([]);const result=await invoicePdfFor({role:"supplier"} as never,"tx");expect(query).toHaveBeenCalledWith(expect.stringContaining("AND supplier_id=:supplier"),{id:"tx",supplier:"supplier-a"});expect(result.filename).not.toContain("/");expect(Buffer.from(result.base64,"base64").subarray(0,5).toString()).toBe("%PDF-");});

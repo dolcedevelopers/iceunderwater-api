@@ -69,8 +69,8 @@ export async function markNotificationRead(
 ): Promise<boolean> {
   const result = await execute(
     `UPDATE iuw_notifications
-     SET read_at = UTC_TIMESTAMP(3)
-     WHERE id = :id AND recipient_kind = :recipientKind AND recipient_id = :recipientId AND read_at IS NULL`,
+     SET read_at = COALESCE(read_at, UTC_TIMESTAMP(3))
+     WHERE id = :id AND recipient_kind = :recipientKind AND recipient_id = :recipientId`,
     { id, recipientKind, recipientId: String(recipientId) },
   );
   return Boolean(result.affectedRows);

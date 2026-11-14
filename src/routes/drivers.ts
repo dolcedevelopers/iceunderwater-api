@@ -1,3 +1,5 @@
+import { availableDeliveryOrders } from "../services/deliveryOrderService.js";
+import { deliveryAction, deliveryHistory } from "../services/deliveryWorkflowService.js";
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { requireAuth } from "../plugins/auth.js";
@@ -64,6 +66,13 @@ const deliveryCreateSchema = z
 const deliveryPatchSchema = z.object({ status: z.string().min(1) }).strict();
 
 const driverRoutes: FastifyPluginAsync = async (app) => {
+  app.get("/delivery-orders",request=>availableDeliveryOrders(requireAuth(request)));
+  app.get<{ Params: { id: string } }>("/deliveries/:id/history", request => deliveryHistory(requireAuth(request),request.params.id));
+  app.post<{ Params: { id: string } }>("/deliveries/:id/actions", request => {
+    const body = z.object({ action:z.enum(["start","decline","arrive","not-collected","receive","redeliver","reassign"]), reason:z.string().max(512).optional(),recipientName:z.string().max(160).optional(),confirmed:z.boolean().optional(),deliveryAt:z.string().datetime().optional(),driverId:z.string().max(64).optional() }).strict().parse(request.body);
+    return deliveryAction(requireAuth(request),request.params.id,body.action,body);
+  });
+
   app.get<{ Querystring: { supplierId?: string } }>("/drivers", async (request) =>
     listDriversFor(requireAuth(request), request.query.supplierId),
   );

@@ -42,7 +42,10 @@ const notificationRoutes: FastifyPluginAsync = async (app) => {
     const session = requireAuth(request);
     const recipient = recipientOf(session);
     const rows = await listNotificationsFor(recipient.kind, recipient.id);
+    if(isSupplier(session)&&session.wpUserId)rows.push(...await listNotificationsFor("wp",String(session.wpUserId)));
+    rows.sort((a,b)=>new Date(b.created_at).getTime()-new Date(a.created_at).getTime());
     return {
+      serverTime: new Date().toISOString(),
       unread: rows.filter((row) => !row.read_at).length,
       items: rows.map(mapNotification),
     };
@@ -51,7 +54,8 @@ const notificationRoutes: FastifyPluginAsync = async (app) => {
   app.post<{ Params: { id: string } }>("/notifications/:id/read", async (request) => {
     const session = requireAuth(request);
     const recipient = recipientOf(session);
-    const ok = await markNotificationRead(request.params.id, recipient.kind, recipient.id);
+    let ok = await markNotificationRead(request.params.id, recipient.kind, recipient.id);
+    if(!ok&&isSupplier(session)&&session.wpUserId)ok=await markNotificationRead(request.params.id,"wp",String(session.wpUserId));
     if (!ok) throw notFound("That notification is not available.");
     return { ok: true };
   });
