@@ -1,4 +1,5 @@
 import {
+  isAdmin, isCompany, isSupplier,
   assertOwnsRecord,
   resolveSupplierScope,
   type SessionLike,
@@ -119,23 +120,37 @@ async function resolveCategoryId(raw: string): Promise<number | undefined> {
   return pending?.id;
 }
 
-export async function listPublicProducts() {
-  const rows = await listProductsFromWp({ publicOnly: true });
+function catalogueTier(session: SessionLike): "company" | "supplier" | undefined {
+  if (isAdmin(session)) return undefined;
+  if (isSupplier(session)) throw accessDenied("Suppliers manage their own products in the business console.");
+  if (isCompany(session)) {
+    if (session?.businessStatus !== "active") throw accessDenied("Your company must be approved before browsing suppliers.");
+    return "supplier";
+  }
+  return "company";
+}
+export async function listPublicProducts(session: SessionLike = null) {
+  const rows = await listProductsFromWp({ publicOnly: true, businessType: catalogueTier(session) });
   return rows.map((row) => { const { costPrice, markupPercent, ...product } = mapProduct(row); return product; });
 }
 
-export async function getPublicProduct(id: string) {
-  const rows = await listProductsFromWp({ publicOnly: true, productId: Number(id) });
+export async function getPublicProduct(id: string, session: SessionLike = null) {
+  const rows = await listProductsFromWp({ publicOnly: true, productId: Number(id), businessType: catalogueTier(session) });
   if (!rows[0]) return null;
   const { costPrice, markupPercent, ...product } = mapProduct(rows[0]);
   return product;
 }
 
-export async function listCatalogueCategories() {
-  const cats = await listWcCategories();
-  return cats
-    .filter((c) => c.name !== "Uncategorized")
-    .map((c) => ({ id: String(c.id), name: c.name, image: c.image?.src || "", count: c.count }));
+export async function listCatalogueCategories(session: SessionLike = null) {
+  const products = await listPublicProducts(session);
+  const categories = new Map<string, { id: string; name: string; image: string; count: number }>();
+  for (const product of products) {
+    const name = product.category;
+    if (!name || name === "Uncategorized") continue;
+    const category = categories.get(name) || { id: name, name, image: product.image, count: 0 };
+    category.count++; categories.set(name, category);
+  }
+  return [...categories.values()];
 }
 
 export async function listManagedProducts(session: SessionLike, supplierId?: string) {

@@ -1,6 +1,6 @@
 import type { PoolConnection, RowDataPacket } from "mysql2/promise";
 import { query, withTransaction } from "../db/pool.js";
-import { isAdmin, isDriver, isSupplier, requireSignedIn, type SessionLike } from "../authz/permissions.js";
+import { isAdmin, isDriver, isBusiness, requireSignedIn, type SessionLike } from "../authz/permissions.js";
 import { accessDenied, conflict, notFound, validationError } from "../lib/errors.js";
 import { makeId } from "../lib/ids.js";
 import { checkDeliveryAccess, deliveryTransition, ownsDelivery, type DeliveryAction, type DeliveryState } from "../lib/deliveryFlow.js";
@@ -34,7 +34,7 @@ export async function deliveriesFor(session: SessionLike) {
   const person=requireSignedIn(session); const params: unknown[]=[]; let filter="1=1";
   if (!isAdmin(person)) {
     if (isDriver(person)) { filter="d.driver_id=?";params.push(person.driverId); }
-    else if (isSupplier(person)) { filter="(d.supplier_id=? OR d.customer_wp_user_id=?)";params.push(person.supplierId || "",person.wpUserId); }
+    else if (isBusiness(person)) { filter="(d.supplier_id=? OR d.customer_wp_user_id=?)";params.push(person.supplierId || "",person.wpUserId); }
     else {filter="d.customer_wp_user_id=?";params.push(person.wpUserId);}
   }
   const rows=await query<(WorkflowRow & {driver_name:string;driver_phone:string;supplier_name:string;supplier_phone:string;supplier_email:string;address:string;slot:Date|null;product_name:string;qty:number})[]>(`SELECT d.*, v.name AS driver_name,v.phone AS driver_phone,s.name AS supplier_name,s.phone AS supplier_phone,s.email AS supplier_email,
@@ -45,7 +45,7 @@ export async function deliveriesFor(session: SessionLike) {
   return rows.map(row=>({ id:row.id,driverId:row.driver_id,supplierId:row.supplier_id,orderId:Number(row.wc_order_id),customerEmail:row.customer_email,status:row.status,
     driverName:row.driver_name,driverPhone:row.driver_phone,supplierName:row.supplier_name,supplierPhone:row.supplier_phone,supplierEmail:row.supplier_email,address:row.address || "Contact the supplier to confirm the delivery address.",items:row.product_name || "See order details",
     assignedAt:iso(row.assigned_at),acceptedAt:iso(row.accepted_at),arrivedAt:iso(row.arrived_at),collectBy:iso(row.collect_by),deliveredAt:iso(row.delivered_at),deliveryAt:iso(row.requested_at || row.slot),recipientName:row.recipient_name,
-    failureReason:row.failure_reason,redeliveryReason:row.redelivery_reason,attempt:Number(row.attempt_number),canReceive:ownsDelivery(person,row),canManage:isAdmin(person)||(isSupplier(person)&&person.supplierId===row.supplier_id),canDrive:isDriver(person)&&person.driverId===row.driver_id,serverTime:new Date().toISOString() }));
+    failureReason:row.failure_reason,redeliveryReason:row.redelivery_reason,attempt:Number(row.attempt_number),canReceive:ownsDelivery(person,row),canManage:isAdmin(person)||(isBusiness(person)&&person.supplierId===row.supplier_id),canDrive:isDriver(person)&&person.driverId===row.driver_id,serverTime:new Date().toISOString() }));
 }
 export async function deliveryHistory(session: SessionLike,id:string) {
   const rows=await query<WorkflowRow[]>("SELECT * FROM iuw_deliveries WHERE id=? AND deleted_at IS NULL",[id]);if(!rows[0])throw notFound("That delivery is not available.");checkDeliveryAccess(session,rows[0]);

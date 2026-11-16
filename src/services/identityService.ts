@@ -73,17 +73,19 @@ export async function principalFromWpUser(user: {
     };
   }
 
-  if (hasRole(user.roles, "iuw_supplier")) {
-    const supplier = await findSupplierByWpUserId(user.wpUserId);
-    if (!supplier) throw accessDenied("This supplier account is not linked to a business yet.");
+  const supplier = await findSupplierByWpUserId(user.wpUserId);
+  if (supplier) {
     return {
       sub: user.wpUserId,
       wpUserId: user.wpUserId,
-      role: ROLES.SUPPLIER,
+      role: supplier.business_type || ROLES.COMPANY,
+      businessStatus: supplier.status,
       email: normalizeEmail(user.email),
       supplierId: supplier.id,
     };
   }
+
+  if(hasRole(user.roles,"iuw_supplier") || hasRole(user.roles,"iuw_company"))throw accessDenied("This business account is not linked yet.");
 
   return {
     sub: user.wpUserId,
@@ -94,7 +96,7 @@ export async function principalFromWpUser(user: {
 }
 
 export async function login(input: {
-  accountType: "customer" | "supplier" | "admin" | "driver";
+  accountType: "customer" | "supplier" | "company" | "admin" | "driver";
   email: string;
   password: string;
   siteToken?: string;
@@ -134,16 +136,7 @@ export async function login(input: {
 
   const principal = await principalFromWpUser(wpUser);
 
-  if (input.accountType === "supplier" && principal.role !== ROLES.SUPPLIER) {
-    throw authRequired("That account is not a supplier account.");
-  }
-  if (input.accountType === "admin" && principal.role !== ROLES.ADMIN) {
-    throw authRequired("That account is not an admin account.");
-  }
-  if (input.accountType === "customer" && principal.role === ROLES.SUPPLIER) {
-    throw authRequired("That is a supplier account. Choose Supplier to sign in.");
-  }
-  // Admin signing in through customer form still gets their real role (matches app auth.js).
+  if (input.accountType !== principal.role) throw authRequired(`This is a ${principal.role} account. Choose the matching sign-in card.`);
 
   return {
     accessToken: await signAccessToken(principal),
@@ -153,7 +146,7 @@ export async function login(input: {
 }
 
 export async function register(input: {
-  accountType: "customer" | "supplier";
+  accountType: "customer" | "supplier" | "company";
   email: string;
   password: string;
   passwordConfirm?: string;
@@ -219,6 +212,7 @@ export async function register(input: {
 
   const supplier = await insertSupplier({
     id: makeId("sup"),
+    business_type: input.accountType === "supplier" ? "supplier" : "company",
     wp_user_id: wpUser.wpUserId,
     name: input.businessName.trim(),
     contact_name: input.name?.trim() || "",

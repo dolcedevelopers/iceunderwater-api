@@ -4,7 +4,7 @@ import {
   canCreatePurchaseRequests,
   isAdmin,
   isCustomer,
-  isSupplier,
+  isBusiness,
   PURCHASE_REQUEST_ACCEPT_WINDOW_MINUTES,
   requireRole,
   requireSignedIn,
@@ -94,10 +94,11 @@ function requesterOf(session: SessionLike): { principal: Principal; supplierId: 
   if (!canCreatePurchaseRequests(principal)) {
     throw accessDenied("Your account cannot place orders.");
   }
+  if (principal.role === ROLES.COMPANY && principal.businessStatus !== "active") throw accessDenied("Your company must be approved before ordering from suppliers.");
   if (!principal.wpUserId) throw validationError("Sign in again to place an order.");
   return {
     principal,
-    supplierId: isSupplier(principal) ? resolveSupplierScope(principal) : null,
+    supplierId: isBusiness(principal) ? resolveSupplierScope(principal) : null,
   };
 }
 
@@ -118,7 +119,7 @@ function buildCheckoutUrl(wcProductId: number, qty: number, requestId: string): 
 
 function includeCheckoutUrl(session: SessionLike, row: PurchaseRequestRow): boolean {
   if (isAdmin(session)) return false;
-  if (isSupplier(session)) {
+  if (isBusiness(session)) {
     return Boolean(session?.supplierId) && row.requester_supplier_id === session?.supplierId;
   }
   if (isCustomer(session)) {
@@ -134,14 +135,14 @@ function buyerLabel(requesterSupplierId: string | null): string {
 export async function listPurchaseSuppliersFor(session: SessionLike) {
   const requester = requesterOf(session);
   const [suppliers, history] = await Promise.all([
-    listSuppliers({ status: "active" }),
+    listSuppliers({ status: "active", businessType: requester.supplierId ? "supplier" : "company" }),
     listPurchaseRequests(requester.supplierId
       ? { supplierId: requester.supplierId }
       : { customerWpUserId: requester.principal.wpUserId }),
   ]);
   const previous = new Set(history.filter((row) => ownsRequest(row, requester) && row.status === "paid")
     .map((row) => row.accepted_supplier_id));
-  return suppliers.filter((row) => row.id !== requester.supplierId).map((row) => ({
+  return suppliers.filter((row) => (row.business_type || "company") === (requester.supplierId ? "supplier" : "company") && row.id !== requester.supplierId).map((row) => ({
     id: row.id, name: row.name, city: row.city, previous: previous.has(row.id),
   }));
 }
@@ -149,10 +150,10 @@ export async function listPurchaseSuppliersFor(session: SessionLike) {
 async function eligibleSuppliers(session: SessionLike, wcProductId: number, qty: number, location: RequestLocation) {
   const requester = requesterOf(session);
   const [suppliers, stockingIds] = await Promise.all([
-    listSuppliers({ status: "active" }), listStockingSupplierIds(wcProductId, qty),
+    listSuppliers({ status: "active", businessType: requester.supplierId ? "supplier" : "company" }), listStockingSupplierIds(wcProductId, qty),
   ]);
   const stocking = new Set(stockingIds);
-  return suppliers.filter((supplier) => supplier.id !== requester.supplierId
+  return suppliers.filter((supplier) => (supplier.business_type || "company") === (requester.supplierId ? "supplier" : "company") && supplier.id !== requester.supplierId
     && stocking.has(supplier.id) && supplierServesLocation(supplier, location));
 }
 
@@ -280,7 +281,7 @@ export async function listPurchaseRequestsFor(session: SessionLike) {
   if (isAdmin(principal)) {
     return (await listPurchaseRequests({})).map((row) => mapRequest(row));
   }
-  if (isSupplier(principal)) {
+  if (isBusiness(principal)) {
     const scope = resolveSupplierScope(principal);
     return (await listPurchaseRequests({ supplierId: scope! })).map((row) =>
       mapRequest(row, { includeCheckoutUrl: includeCheckoutUrl(principal, row) }),
@@ -304,7 +305,7 @@ export async function getPurchaseRequestFor(session: SessionLike, id: string) {
   if (includeCheckoutUrl(principal, row) || (isCustomer(principal) && Number(row.customer_wp_user_id) === Number(principal.wpUserId))) {
     return mapRequest(row, { includeCheckoutUrl: includeCheckoutUrl(principal, row) });
   }
-  if (isSupplier(principal)) {
+  if (isBusiness(principal)) {
     const scope = resolveSupplierScope(principal);
     const mine = await listPurchaseRequests({ supplierId: scope! });
     if (mine.some((item) => item.id === id)) return mapRequest(row, { includeCheckoutUrl: includeCheckoutUrl(principal, row) });
@@ -313,7 +314,7 @@ export async function getPurchaseRequestFor(session: SessionLike, id: string) {
 }
 
 export async function acceptPurchaseRequestFor(session: SessionLike, id: string, ip?: string) {
-  requireRole(session, ROLES.SUPPLIER);
+  requireRole(session, ROLES.SUPPLIER, ROLES.COMPANY);
   await expireStalePurchaseRequests();
   const row = await findPurchaseRequestById(id);
   if (!row) throw notFound("That request is not available.");
@@ -326,6 +327,7 @@ export async function acceptPurchaseRequestFor(session: SessionLike, id: string,
   const accepted = await acceptPurchaseRequest(id, scope, (current) =>
     buildCheckoutUrl(Number(current.wc_product_id), Number(current.qty), current.id),
     async (current, supplier, connection) => {
+      if ((supplier.business_type || "company") !== (current.requester_supplier_id ? "supplier" : "company")) throw accessDenied("This request belongs to a different sales channel.");
       const location = requestLocation(mapRequest(current).location);
       const stocking = await listStockingSupplierIds(Number(current.wc_product_id), Number(current.qty), connection);
       if (!stocking.includes(scope) || !supplierServesLocation(supplier, location)) {

@@ -4,7 +4,7 @@ import {
   isAdmin,
   isCustomer,
   isDriver,
-  isSupplier,
+  isBusiness,
   requireRole,
   resolveSupplierScope,
   type SessionLike,
@@ -157,7 +157,7 @@ export async function trackDriver(session: SessionLike, driverId: string) {
   const driver = await findDriverById(driverId);
   if (!driver) throw accessDenied("That driver is not available.");
 
-  if (isAdmin(session) || (isSupplier(session) && session?.supplierId === driver.supplier_id)) {
+  if (isAdmin(session) || (isBusiness(session) && session?.supplierId === driver.supplier_id)) {
     const ping = await latestDriverPing(driverId);
     return {
       driverId,
@@ -168,7 +168,7 @@ export async function trackDriver(session: SessionLike, driverId: string) {
     };
   }
 
-  if (isCustomer(session) || isSupplier(session)) {
+  if (isCustomer(session) || isBusiness(session)) {
     const active = await findActiveDeliveryForDriverCustomer(driverId, {
       wpUserId: session!.wpUserId,
       email: identityEmail(session),
@@ -195,7 +195,7 @@ export async function assignDelivery(
   data: { driverId: string; orderId: number; customerEmail?: string; customerWpUserId?: number },
   ip?: string,
 ) {
-  requireRole(session, ROLES.ADMIN, ROLES.SUPPLIER);
+  requireRole(session, ROLES.ADMIN, ROLES.SUPPLIER, ROLES.COMPANY);
   const driver = await findDriverById(data.driverId);
   assertOwnsRecord(session, driver ? { supplierId: driver.supplier_id } : null, "driver");
   const transaction = await findTransactionByOrderId(data.orderId);

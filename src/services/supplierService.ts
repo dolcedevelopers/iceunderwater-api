@@ -1,7 +1,7 @@
 import { selectedCity } from "../lib/serviceArea.js";
 import {
   assertOwnsRecord,
-  isAdmin,
+  isAdmin, isCompany, isBusiness,
   isCustomer,
   requireAdmin,
   requireRole,
@@ -44,7 +44,7 @@ export async function listSuppliersFor(
   session: SessionLike,
   opts: { city?: string; province?: string; status?: string } = {},
 ) {
-  requireRole(session, ROLES.ADMIN, ROLES.SUPPLIER);
+  requireRole(session, ROLES.ADMIN, ROLES.COMPANY, ROLES.SUPPLIER);
   if (isAdmin(session)) {
     return (
       await listSuppliers({
@@ -86,11 +86,16 @@ export async function listCompaniesDirectory(
     province?: string;
     scope?: "city" | "province" | "national";
     viewerCity?: string;
+    businessType?: "company" | "supplier";
   } = {},
 ) {
-  requireRole(session, ROLES.CUSTOMER, ROLES.ADMIN);
+  const businessType = opts.businessType || "company";
+  if (businessType === "supplier") {
+    requireRole(session, ROLES.COMPANY, ROLES.ADMIN);
+    if (isCompany(session) && session?.businessStatus !== "active") throw accessDenied("Your company must be approved first.");
+  } else requireRole(session, ROLES.CUSTOMER, ROLES.ADMIN);
   const showInternal = isAdmin(session);
-  const rows = (await listSuppliers({ status: "active" })).map((row) => {
+  const rows = (await listSuppliers({ status: "active", businessType })).filter((row) => (row.business_type || "company") === businessType).map((row) => {
     const dto = mapSupplier(row);
     return showInternal ? dto : toDirectoryEntry(dto);
   });
@@ -140,16 +145,18 @@ export async function getSupplierFor(session: SessionLike, supplierId: string) {
   return mapSupplier(row);
 }
 
-export async function getSupplierBrand(supplierId: string) {
+export async function getSupplierBrand(supplierId: string, session: SessionLike = null) {
   const row = await findSupplierById(supplierId);
   if (!row || row.status !== "active") return null;
-  return { id: row.id, name: row.name, logo: publicHttpsUrl(row.logo_url) };
+  if (row.business_type === "supplier" && !isAdmin(session) && !(isCompany(session) && session?.businessStatus === "active") && !(isBusiness(session) && session?.supplierId === row.id)) return null;
+  return { id: row.id, name: row.name, logo: publicHttpsUrl(row.logo_url), businessType: row.business_type || "company" };
 }
 
 export async function createSupplierFor(
   session: SessionLike,
   data: {
     name: string;
+    businessType?: "company" | "supplier";
     contactName?: string;
     email: string;
     phone?: string;
@@ -181,6 +188,7 @@ export async function createSupplierFor(
   const row = await insertSupplier({
     id: makeId("sup"),
     wp_user_id: wpUserId,
+    business_type: data.businessType || "company",
     name: data.name.trim(),
     contact_name: data.contactName?.trim() || "",
     email,
@@ -222,6 +230,8 @@ export async function updateSupplierFor(
   assertOwnsRecord(session, existing ? { supplierId: existing.id } : null, "supplier");
 
   const safe: Record<string, unknown> = { ...changes };
+  if (!isAdmin(session) && safe.businessType !== undefined) throw accessDenied("Only administrators can change a business type.");
+  if (safe.businessType !== undefined && safe.businessType !== "company" && safe.businessType !== "supplier") throw validationError("Choose Company or Supplier.");
   if (!isAdmin(session)) {
     delete safe.status;
     delete safe.markupPercent;
@@ -247,6 +257,7 @@ export async function updateSupplierFor(
   }
 
   const updated = await updateSupplier(scope!, {
+    business_type: safe.businessType as "company" | "supplier" | undefined,
     name: typeof safe.name === "string" ? safe.name : undefined,
     contact_name: typeof safe.contactName === "string" ? safe.contactName : undefined,
     email: typeof safe.email === "string" ? normalizeEmail(safe.email) : undefined,

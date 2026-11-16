@@ -1,4 +1,4 @@
-import { canCreatePurchaseRequests, isSupplier, requireSignedIn, resolveSupplierScope, type SessionLike } from "../authz/permissions.js";
+import { canCreatePurchaseRequests, isBusiness, requireSignedIn, resolveSupplierScope, type SessionLike } from "../authz/permissions.js";
 import { accessDenied, AppError, conflict, notFound, validationError } from "../lib/errors.js";
 import { findPurchaseRequestById, type PurchaseRequestRow } from "../repositories/purchaseRequestRepo.js";
 import { findSupplierById } from "../repositories/supplierRepo.js";
@@ -9,7 +9,7 @@ async function context(session: SessionLike, id: string) {
   if (!canCreatePurchaseRequests(principal)) throw accessDenied();
   const row = await findPurchaseRequestById(id);
   if (!row) throw notFound("That request is not available.");
-  const supplierId = isSupplier(principal) ? resolveSupplierScope(principal) : null;
+  const supplierId = isBusiness(principal) ? resolveSupplierScope(principal) : null;
   if (supplierId ? row.requester_supplier_id !== supplierId : row.requester_supplier_id != null || Number(row.customer_wp_user_id) !== principal.wpUserId) throw accessDenied();
   if (row.status !== "paid" || !row.woo_order_id || !row.accepted_supplier_id) throw validationError("Refund requests are available for paid orders only.");
   const supplier = await findSupplierById(row.accepted_supplier_id);

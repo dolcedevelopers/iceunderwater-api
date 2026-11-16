@@ -1,4 +1,4 @@
-import { isSupplier, requireSignedIn, canCreatePurchaseRequests, canAccessTransaction, resolveSupplierScope, type SessionLike } from "../authz/permissions.js";
+import { isBusiness, requireSignedIn, canCreatePurchaseRequests, canAccessTransaction, resolveSupplierScope, type SessionLike } from "../authz/permissions.js";
 import { accessDenied } from "../lib/errors.js";
 import { listTransactionsFor } from "./transactionService.js";
 import { listPurchaseRequestsFor } from "./purchaseRequestService.js";
@@ -9,7 +9,7 @@ export async function purchaseHistoryFor(session: SessionLike) {
   const [requests, transactions] = await Promise.all([
     listPurchaseRequestsFor(principal), listTransactionsFor(principal),
   ]);
-  const supplierId = isSupplier(principal) ? resolveSupplierScope(principal) : null;
+  const supplierId = isBusiness(principal) ? resolveSupplierScope(principal) : null;
   return {
     requests: requests.filter((row) => supplierId ? row.requesterSupplierId === supplierId
       : row.customerWpUserId === principal.wpUserId),

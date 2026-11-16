@@ -2,6 +2,7 @@ import type { RowDataPacket } from "mysql2";
 import { execute, query } from "../db/pool.js";
 
 export type SupplierRow = RowDataPacket & {
+  business_type?: "company" | "supplier";
   id: string;
   wp_user_id: number | null;
   name: string;
@@ -26,12 +27,14 @@ export type SupplierRow = RowDataPacket & {
 
 export async function listSuppliers(filter?: {
   id?: string;
+  businessType?: "company" | "supplier";
   status?: string;
   city?: string;
   province?: string;
 }): Promise<SupplierRow[]> {
   const clauses = ["deleted_at IS NULL"];
   const params: Record<string, unknown> = {};
+  if (filter?.businessType) {clauses.push("business_type = :businessType");params.businessType=filter.businessType;}
   if (filter?.id) {
     clauses.push("id = :id");
     params.id = filter.id;
@@ -71,6 +74,7 @@ export async function findSupplierByWpUserId(wpUserId: number): Promise<Supplier
 }
 
 export async function insertSupplier(row: {
+  business_type?: "company" | "supplier";
   id: string;
   wp_user_id: number | null;
   name: string;
@@ -87,12 +91,12 @@ export async function insertSupplier(row: {
 }): Promise<SupplierRow> {
   await execute(
     `INSERT INTO iuw_suppliers
-      (id, wp_user_id, name, contact_name, email, phone, city, province,
+      (id, business_type, wp_user_id, name, contact_name, email, phone, city, province,
        vat_number, registration_number, address, logo_url, status)
      VALUES
-      (:id, :wp_user_id, :name, :contact_name, :email, :phone, :city, :province,
+      (:id, :business_type, :wp_user_id, :name, :contact_name, :email, :phone, :city, :province,
        :vat_number, :registration_number, :address, :logo_url, :status)`,
-    { logo_url: "", province: "", vat_number: "", registration_number: "", address: "", ...row },
+    { business_type: "company", logo_url: "", province: "", vat_number: "", registration_number: "", address: "", ...row },
   );
   const created = await findSupplierById(row.id);
   if (!created) throw new Error("supplier insert failed");
@@ -102,6 +106,7 @@ export async function insertSupplier(row: {
 export async function updateSupplier(
   id: string,
   changes: Partial<{
+    business_type: "company" | "supplier";
     name: string;
     contact_name: string;
     email: string;

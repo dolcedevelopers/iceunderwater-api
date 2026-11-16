@@ -1,3 +1,4 @@
+import { currentBusinessPrincipal } from "./businessIdentity.js";
 import { createHash, randomUUID } from "node:crypto";
 import { SignJWT, jwtVerify } from "jose";
 import { config } from "../config.js";
@@ -151,7 +152,7 @@ export async function rotateRefreshToken(
 
   await execute(`UPDATE iuw_refresh_tokens SET revoked_at = UTC_TIMESTAMP(3) WHERE jti = :jti`, { jti });
 
-  const principal: Principal = {
+  const claimed: Principal = {
     sub: wpUserId || 0,
     wpUserId: Number(row.wp_user_id) || wpUserId,
     role: payload.role as Principal["role"],
@@ -161,6 +162,7 @@ export async function rotateRefreshToken(
     driverId: payload.driverId ? String(payload.driverId) : undefined,
   };
 
+  const principal = await currentBusinessPrincipal(claimed);
   const clientKind = (row.client_kind === "mobile" || row.client_kind === "web" ? row.client_kind : "unknown") as ClientKind;
   const accessToken = await signAccessToken(principal);
   // Rotation keeps the same client; do not revoke sibling mobile sessions here.

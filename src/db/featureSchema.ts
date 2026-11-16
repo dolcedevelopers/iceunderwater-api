@@ -14,6 +14,13 @@ export const deliveryColumns = {
   attempt_number: "INT UNSIGNED NOT NULL DEFAULT 1",
 } as const;
 
+export async function ensureBusinessSchemaOnConnection(conn: SchemaConn): Promise<string[]> {
+  const applied:string[]=[];
+  const [columns]=await conn.query("SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=? AND COLUMN_NAME=?", ["iuw_suppliers", "business_type"]);
+  if(!(columns as unknown[]).length){try{await conn.query("ALTER TABLE iuw_suppliers ADD COLUMN business_type VARCHAR(16) NOT NULL DEFAULT 'company'");applied.push("iuw_suppliers.business_type");}catch(error){if((error as {code?:string}).code!=="ER_DUP_FIELDNAME")throw error;}}
+  return applied;
+}
+
 export async function ensureDeliverySchemaOnConnection(conn: SchemaConn): Promise<string[]> {
   const applied: string[] = [];
   for (const [table, columns] of [["iuw_deliveries", deliveryColumns], ["iuw_delivery_events", { details: "TEXT NULL" }]] as const) {
@@ -55,6 +62,7 @@ export async function ensureRsvpSchemaOnConnection(conn: SchemaConn) {
 }
 
 const probes = [
+  "SELECT business_type FROM iuw_suppliers LIMIT 0",
   `SELECT ${Object.keys(deliveryColumns).join(",")} FROM iuw_deliveries LIMIT 0`,
   "SELECT details FROM iuw_delivery_events LIMIT 0",
   "SELECT id,event_key,wp_user_id,email,province,city,status,created_at,updated_at FROM iuw_event_rsvps LIMIT 0",

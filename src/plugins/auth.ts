@@ -1,3 +1,4 @@
+import { currentBusinessPrincipal } from "../auth/businessIdentity.js";
 import type { FastifyPluginAsync, FastifyRequest } from "fastify";
 import fp from "./fp.js";
 import { claimsToPrincipal, verifyAccessToken } from "../auth/tokens.js";
@@ -24,13 +25,16 @@ const authPlugin: FastifyPluginAsync = async (app) => {
     request.principal = null;
     const token = extractBearer(request);
     if (!token) return;
+    let principal: Principal;
     try {
       const claims = await verifyAccessToken(token);
-      request.principal = claimsToPrincipal(claims);
+      principal = claimsToPrincipal(claims);
     } catch {
       // Leave principal null; route guards decide 401 vs public.
       request.authTokenInvalid = true;
+      return;
     }
+    request.principal = await currentBusinessPrincipal(principal);
   });
 };
 

@@ -2,7 +2,7 @@ import type { RowDataPacket } from "mysql2";
 import { requireRole, ROLES, isAdmin, type SessionLike } from "../authz/permissions.js";
 import { query } from "../db/pool.js";
 export async function availableDeliveryOrders(session:SessionLike) {
-  const person=requireRole(session,ROLES.ADMIN,ROLES.SUPPLIER);
+  const person=requireRole(session,ROLES.ADMIN,ROLES.SUPPLIER,ROLES.COMPANY);
   const rows=await query<(RowDataPacket & {wc_order_id:number;reference:string;customer_email:string;supplier_id:string;total_cents:number})[]>(`SELECT t.wc_order_id,t.reference,t.customer_email,t.supplier_id,t.total_cents FROM iuw_transactions t
     WHERE t.status='paid' AND t.deleted_at IS NULL ${isAdmin(person)?"":"AND t.supplier_id=:supplier"}
     AND NOT EXISTS (SELECT 1 FROM iuw_deliveries d WHERE d.wc_order_id=t.wc_order_id AND d.deleted_at IS NULL)

@@ -20,7 +20,7 @@ const createSchema = z
     /** Back-compat: treated as cost when costPrice omitted. */
     price: z.number().optional(),
     stock: z.number().int().optional(),
-    unit: z.string().optional(),
+    unit: z.string().trim().max(80).optional(),
     description: z.string().optional(),
     active: z.boolean().optional(),
   })
@@ -37,7 +37,7 @@ const patchSchema = z
     costPrice: z.number().optional(),
     price: z.number().optional(),
     stock: z.number().int().optional(),
-    unit: z.string().optional(),
+    unit: z.string().trim().max(80).optional(),
     description: z.string().optional(),
     active: z.boolean().optional(),
     image: z.string().optional(),

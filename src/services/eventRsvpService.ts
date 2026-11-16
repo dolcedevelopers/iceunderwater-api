@@ -8,7 +8,7 @@ import { selectedCity } from "../lib/serviceArea.js";
 export const RSVP_EVENT_KEY = "warrior-kings";
 type RsvpRow = RowDataPacket & { id: string; event_key: string; wp_user_id: number; email: string; province: string; city: string; status: string; updated_at: Date };
 function attendee(session: SessionLike) {
-  const person = requireRole(session, ROLES.CUSTOMER, ROLES.SUPPLIER, ROLES.ADMIN);
+  const person = requireRole(session, ROLES.CUSTOMER, ROLES.SUPPLIER, ROLES.COMPANY, ROLES.ADMIN);
   if (!Number.isSafeInteger(person.wpUserId) || person.wpUserId <= 0) throw validationError("Sign in with your customer account to RSVP.");
   return person;
 }

@@ -25,3 +25,15 @@ it("keeps cost and markup available in the authenticated supplier's own catalogu
   expect(listProductsFromWp).toHaveBeenCalledWith({ supplierId: "a" });
   expect(result[0]).toHaveProperty("costPrice", 200);
 });
+
+it("scopes catalogue queries by authenticated buying tier", async () => {
+  await listPublicProducts();
+  expect(listProductsFromWp).toHaveBeenLastCalledWith({publicOnly:true,businessType:"company"});
+  const company={sub:1,wpUserId:1,role:"company" as const,email:"buyer@example.com",businessStatus:"active" as const,supplierId:"b"};
+  await listPublicProducts(company);
+  expect(listProductsFromWp).toHaveBeenLastCalledWith({publicOnly:true,businessType:"supplier"});
+  await getPublicProduct("50",company);
+  expect(listProductsFromWp).toHaveBeenLastCalledWith({publicOnly:true,productId:50,businessType:"supplier"});
+  await expect(listPublicProducts({...company,businessStatus:"pending"})).rejects.toThrow();
+  await expect(listPublicProducts({...company,role:"supplier"})).rejects.toThrow();
+});

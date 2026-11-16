@@ -26,6 +26,7 @@ const addressSchema = z.string().max(512, "Address is too long.").optional();
 
 const createSchema = z
   .object({
+    businessType: z.enum(["company", "supplier"]).optional(),
     name: z.string().min(1),
     contactName: z.string().optional(),
     email: z.string().email(),
@@ -42,6 +43,7 @@ const createSchema = z
 
 const patchSchema = z
   .object({
+    businessType: z.enum(["company", "supplier"]).optional(),
     name: z.string().optional(),
     contactName: z.string().optional(),
     email: z.string().email().optional(),
@@ -82,13 +84,15 @@ const supplierRoutes: FastifyPluginAsync = async (app) => {
     return listCompaniesDirectory(requireAuth(request), q);
   });
 
+  app.get("/supplier-directory", async (request) => listCompaniesDirectory(requireAuth(request), { ...directoryQuery.parse(request.query || {}), businessType: "supplier" }));
+
   app.post("/suppliers", async (request) => {
     const body = createSchema.parse(request.body);
     return createSupplierFor(requireAuth(request), body, request.ip);
   });
 
   app.get<{ Params: { id: string } }>("/suppliers/:id/brand", async (request) => {
-    const brand = await getSupplierBrand(request.params.id);
+    const brand = await getSupplierBrand(request.params.id, request.principal);
     if (!brand) throw notFound("Brand not found.");
     return brand;
   });

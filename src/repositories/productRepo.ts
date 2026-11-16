@@ -76,6 +76,7 @@ export async function softDeleteProductOwner(wcProductId: number): Promise<void>
 export async function listProductsFromWp(filter: {
   supplierId?: string | null;
   publicOnly?: boolean;
+  businessType?: "company" | "supplier";
   productId?: number;
 }): Promise<
   (RowDataPacket & {
@@ -106,6 +107,10 @@ export async function listProductsFromWp(filter: {
   if (filter.productId) {
     clauses.push("p.ID = :productId");
     params.productId = filter.productId;
+  }
+  if (filter.businessType) {
+    clauses.push(filter.businessType === "company" ? "(po.supplier_id IS NULL OR s.business_type = :businessType)" : "s.business_type = :businessType");
+    params.businessType = filter.businessType;
   }
   if (filter.publicOnly) {
     clauses.push("p.post_status = 'publish'");

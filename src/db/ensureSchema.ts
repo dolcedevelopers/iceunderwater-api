@@ -1,6 +1,6 @@
 import type { Connection, PoolConnection, RowDataPacket } from "mysql2/promise";
 import { getPool } from "./pool.js";
-import { assertFeatureSchemaOnConnection, ensureDeliverySchemaOnConnection, ensureRsvpSchemaOnConnection } from "./featureSchema.js";
+import { ensureBusinessSchemaOnConnection, assertFeatureSchemaOnConnection, ensureDeliverySchemaOnConnection, ensureRsvpSchemaOnConnection } from "./featureSchema.js";
 
 type CountRow = RowDataPacket & { n: number };
 type SchemaConn = Connection | PoolConnection;
@@ -63,6 +63,7 @@ async function addIndex(
  */
 export async function ensureLiveSchemaOnConnection(conn: SchemaConn): Promise<string[]> {
   const applied: string[] = [];
+  applied.push(...await ensureBusinessSchemaOnConnection(conn));
   applied.push(...await ensureDeliverySchemaOnConnection(conn));
   await ensureRsvpSchemaOnConnection(conn);
   await addColumn(conn, "iuw_purchase_requests", "refund_status", "VARCHAR(16) NULL", applied);

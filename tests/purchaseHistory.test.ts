@@ -31,7 +31,7 @@ it("excludes incoming sales from a company's purchase history", async () => {
   vi.mocked(listTransactionsFor).mockResolvedValue([
     { id: "purchase", transactionType: "purchase" }, { id: "sale", transactionType: "sale" },
   ] as never);
-  const result = await purchaseHistoryFor({ ...customer, role: "supplier", supplierId: "a" });
+  const result = await purchaseHistoryFor({ ...customer, role: "company", businessStatus: "active", supplierId: "a" });
   expect(result.requests.map((row) => row.id)).toEqual(["outgoing"]);
   expect(result.purchases.map((row) => row.id)).toEqual(["purchase"]);
 });

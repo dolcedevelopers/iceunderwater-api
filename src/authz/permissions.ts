@@ -10,6 +10,7 @@ export const ROLES = {
   GUEST: "guest",
   CUSTOMER: "customer",
   SUPPLIER: "supplier",
+  COMPANY: "company",
   ADMIN: "admin",
   DRIVER: "driver",
 } as const;
@@ -22,6 +23,7 @@ export type Principal = {
   role: Exclude<Role, "guest">;
   email: string;
   supplierId?: string;
+  businessStatus?: "active" | "pending" | "suspended";
   adminRole?: AdminRole;
   driverId?: string;
   wpUserId: number;
@@ -39,7 +41,7 @@ export type TransactionAccess = {
 
 export function roleOf(session: SessionLike): Role {
   const role = session?.role;
-  if (role === ROLES.CUSTOMER || role === ROLES.SUPPLIER || role === ROLES.ADMIN || role === ROLES.DRIVER) {
+  if (role === ROLES.CUSTOMER || role === ROLES.COMPANY || role === ROLES.SUPPLIER || role === ROLES.ADMIN || role === ROLES.DRIVER) {
     return role;
   }
   return ROLES.GUEST;
@@ -47,6 +49,8 @@ export function roleOf(session: SessionLike): Role {
 
 export const isAdmin = (session: SessionLike) => roleOf(session) === ROLES.ADMIN;
 export const isSupplier = (session: SessionLike) => roleOf(session) === ROLES.SUPPLIER;
+export const isCompany = (session: SessionLike) => roleOf(session) === ROLES.COMPANY;
+export const isBusiness = (session: SessionLike) => isCompany(session) || isSupplier(session);
 export const isCustomer = (session: SessionLike) => roleOf(session) === ROLES.CUSTOMER;
 export const isDriver = (session: SessionLike) => roleOf(session) === ROLES.DRIVER;
 export const isSignedIn = (session: SessionLike) => roleOf(session) !== ROLES.GUEST;
@@ -80,7 +84,7 @@ export function requireAdmin(session: SessionLike): Principal {
  */
 export function resolveSupplierScope(session: SessionLike, requestedId?: string | null): string | null {
   if (isAdmin(session)) return requestedId || null;
-  if (isSupplier(session)) {
+  if (isBusiness(session)) {
     const own = session?.supplierId;
     if (!own) throw accessDenied("This supplier account is not linked to a business yet.");
     if (requestedId && requestedId !== own) {
@@ -97,14 +101,14 @@ export function resolveSupplierScope(session: SessionLike, requestedId?: string 
 export function assertOwnsRecord<T extends OwnedRecord>(session: SessionLike, record: T, label = "record"): NonNullable<T> {
   if (!record) throw accessDenied(`That ${label} is not available.`);
   if (isAdmin(session)) return record as NonNullable<T>;
-  if (isSupplier(session) && record.supplierId === session?.supplierId) return record as NonNullable<T>;
+  if (isBusiness(session) && record.supplierId === session?.supplierId) return record as NonNullable<T>;
   throw accessDenied(`That ${label} is not available.`);
 }
 
 export function canAccessTransaction(session: SessionLike, transaction: TransactionAccess): boolean {
   if (!transaction) return false;
   if (isAdmin(session)) return true;
-  if (isSupplier(session)) return Boolean(session?.supplierId) && (transaction.supplierId === session?.supplierId
+  if (isBusiness(session)) return Boolean(session?.supplierId) && (transaction.supplierId === session?.supplierId
     || (transaction.customerId != null && String(transaction.customerId) === String(session?.wpUserId)));
   if (isCustomer(session)) {
     const email = identityEmail(session);
@@ -136,7 +140,7 @@ export const PURCHASE_REQUEST_ACCEPT_WINDOW_MINUTES = 15;
 
 /** Buying is open to shoppers and to companies ordering from other companies. */
 export function canCreatePurchaseRequests(session: SessionLike): boolean {
-  return isCustomer(session) || isSupplier(session);
+  return isCustomer(session) || isCompany(session);
 }
 
 export type EventGroupAccess = {

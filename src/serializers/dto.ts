@@ -3,6 +3,7 @@ import { centsToRands } from "../lib/money.js";
 import { EVENT_GROUP_MAX_MEMBERS } from "../authz/permissions.js";
 
 export type SupplierDto = {
+  businessType: "company" | "supplier";
   id: string;
   name: string;
   contactName: string;
@@ -117,6 +118,7 @@ export function toIso(value: Date | string | null | undefined): string {
 }
 
 export function mapSupplier(row: {
+  business_type?: "company" | "supplier";
   id: string;
   name: string;
   contact_name: string;
@@ -137,6 +139,7 @@ export function mapSupplier(row: {
 }): SupplierDto {
   return {
     id: row.id,
+    businessType: row.business_type || "company",
     name: row.name,
     contactName: row.contact_name,
     email: row.email,

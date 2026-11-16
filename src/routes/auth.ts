@@ -12,7 +12,7 @@ import { changePasswordFor } from "../services/passwordService.js";
 
 const loginSchema = z
   .object({
-    accountType: z.enum(["customer", "supplier", "admin", "driver"]),
+    accountType: z.enum(["customer", "company", "supplier", "admin", "driver"]),
     email: z.string().email(),
     password: z.string().min(1),
     siteToken: z.string().optional(),
@@ -23,7 +23,7 @@ const loginSchema = z
 
 const registerSchema = z
   .object({
-    accountType: z.enum(["customer", "supplier"]),
+    accountType: z.enum(["customer", "company", "supplier"]),
     email: z.string().email(),
     password: z.string().min(8),
     passwordConfirm: z.string().optional(),

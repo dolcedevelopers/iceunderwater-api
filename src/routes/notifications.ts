@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync } from "fastify";
 import { requireAuth } from "../plugins/auth.js";
-import { isSupplier, requireSignedIn } from "../authz/permissions.js";
+import { isBusiness, requireSignedIn } from "../authz/permissions.js";
 import { accessDenied, notFound } from "../lib/errors.js";
 import {
   listNotificationsFor,
@@ -25,7 +25,7 @@ function recipientOf(session: ReturnType<typeof requireSignedIn>): {
   kind: NotificationRow["recipient_kind"];
   id: string;
 } {
-  if (isSupplier(session) && session.supplierId) {
+  if (isBusiness(session) && session.supplierId) {
     return { kind: "supplier", id: session.supplierId };
   }
   if (session.wpUserId) {
@@ -42,7 +42,7 @@ const notificationRoutes: FastifyPluginAsync = async (app) => {
     const session = requireAuth(request);
     const recipient = recipientOf(session);
     const rows = await listNotificationsFor(recipient.kind, recipient.id);
-    if(isSupplier(session)&&session.wpUserId)rows.push(...await listNotificationsFor("wp",String(session.wpUserId)));
+    if(isBusiness(session)&&session.wpUserId)rows.push(...await listNotificationsFor("wp",String(session.wpUserId)));
     rows.sort((a,b)=>new Date(b.created_at).getTime()-new Date(a.created_at).getTime());
     return {
       serverTime: new Date().toISOString(),
@@ -55,7 +55,7 @@ const notificationRoutes: FastifyPluginAsync = async (app) => {
     const session = requireAuth(request);
     const recipient = recipientOf(session);
     let ok = await markNotificationRead(request.params.id, recipient.kind, recipient.id);
-    if(!ok&&isSupplier(session)&&session.wpUserId)ok=await markNotificationRead(request.params.id,"wp",String(session.wpUserId));
+    if(!ok&&isBusiness(session)&&session.wpUserId)ok=await markNotificationRead(request.params.id,"wp",String(session.wpUserId));
     if (!ok) throw notFound("That notification is not available.");
     return { ok: true };
   });

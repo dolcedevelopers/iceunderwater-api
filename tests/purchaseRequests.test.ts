@@ -22,7 +22,7 @@ const location = { address: "Johannesburg", province: "Gauteng", city: "Johannes
 const deliveryAt = new Date(Date.now() + 86400000).toISOString();
 const createPurchaseRequestFor: typeof createRaw = (session, data, ip) => createRaw(session, { deliveryAt, location, ...data }, ip);
 const customer: Principal = { sub: 1, wpUserId: 1, role: "customer", email: "buyer@example.com" };
-const company: Principal = { ...customer, role: "supplier", supplierId: "own" };
+const company: Principal = { ...customer, role: "company", businessStatus: "active", supplierId: "own" };
 function row(changes: Record<string, unknown> = {}) {
   return { id: "req", customer_wp_user_id: 1, customer_email: customer.email, requester_supplier_id: null,
     location_address: location.address, location_province: location.province, location_city: location.city, fulfilment_type: location.fulfilmentType, delivery_at: new Date(deliveryAt), target_supplier_id: null, wc_product_id: 5, product_name: "Water", qty: 2, status: "open",
@@ -32,10 +32,10 @@ function row(changes: Record<string, unknown> = {}) {
 beforeEach(() => {
   vi.resetAllMocks();
   vi.mocked(listStockingSupplierIds).mockResolvedValue(["own", "a", "b"]);
-  vi.mocked(suppliers.listSuppliers).mockResolvedValue([
+  vi.mocked(suppliers.listSuppliers).mockImplementation(async (filter) => [
     { id: "own", name: "Own", city: "Johannesburg" }, { id: "a", name: "A", city: "Johannesburg" },
     { id: "b", name: "B", city: "Johannesburg" },
-  ].map((supplier) => ({ ...supplier, province: "Gauteng" })) as never);
+  ].map((supplier) => ({ ...supplier, province: "Gauteng", business_type: filter?.businessType || "company" })) as never);
   vi.mocked(requests.listPurchaseRequests).mockResolvedValue([]);
   vi.mocked(requests.findPurchaseRequestById).mockResolvedValue(row());
   vi.mocked(requests.insertPurchaseRequest).mockImplementation(async (input) => row(input));
@@ -53,7 +53,7 @@ describe("supplier routing for individual and company buyers", () => {
   });
   it("sends All to every active supplier and excludes the requesting company", async () => {
     await createPurchaseRequestFor(company, { wcProductId: 5, targetSupplierId: null });
-    expect(suppliers.listSuppliers).toHaveBeenCalledWith({ status: "active" });
+    expect(suppliers.listSuppliers).toHaveBeenCalledWith({ status: "active", businessType: "supplier" });
     expect(requests.insertPurchaseOffers).toHaveBeenCalledWith(expect.any(String), ["a", "b"]);
   });
   it.each(["own", "unknown"])("rejects an unavailable or own supplier %s", async (targetSupplierId) => {
@@ -242,4 +242,24 @@ it("returns supplier refund contacts only to the buyer view", async () => {
   const incoming = await listPurchaseRequestsFor({ ...company, supplierId: "a" });
   expect(incoming[0]?.supplierContact).toBeNull();
   expect(incoming[0]?.refundRequest).toBeNull();
+});
+
+describe("business sales channels", () => {
+  it("never offers wholesale suppliers to customers", async () => {
+    vi.mocked(suppliers.listSuppliers).mockResolvedValue([{ id:"a", business_type:"supplier", city:"Johannesburg", province:"Gauteng" }] as never);
+    await expect(createPurchaseRequestFor(customer,{wcProductId:5,qty:1})).rejects.toThrow();
+    expect(insertNotification).not.toHaveBeenCalled();
+    expect(await listPurchaseSuppliersFor(customer)).toEqual([]);
+  });
+  it("never offers retail companies to companies buying stock", async () => {
+    vi.mocked(suppliers.listSuppliers).mockResolvedValue([{ id:"a", business_type:"company", city:"Johannesburg", province:"Gauteng" }] as never);
+    await expect(createPurchaseRequestFor(company,{wcProductId:5,qty:1})).rejects.toThrow();
+    expect(insertNotification).not.toHaveBeenCalled();
+  });
+  it("does not let suppliers or unapproved companies place orders", async () => {
+    for (const buyer of [{...company,role:"supplier" as const}, {...company,businessStatus:"pending" as const}]) {
+      await expect(createPurchaseRequestFor(buyer,{wcProductId:5,qty:1})).rejects.toThrow();
+    }
+    expect(requests.insertPurchaseRequest).not.toHaveBeenCalled();
+  });
 });
