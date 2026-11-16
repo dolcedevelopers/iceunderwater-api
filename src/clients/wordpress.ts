@@ -1,5 +1,5 @@
 import { config } from "../config.js";
-import { httpJson } from "./http.js";
+import { httpJson, type HttpJsonOptions } from "./http.js";
 import { AppError, authRequired } from "../lib/errors.js";
 import { normalizeEmail } from "../lib/ids.js";
 
@@ -10,9 +10,20 @@ export type WpVerifiedUser = {
   roles: string[];
 };
 
+/** A hosting denial or outage is not an end-user permission failure. */
+async function accountRequest<T>(url: string, options: HttpJsonOptions): Promise<T> {
+  try { return await httpJson<T>(url, options); }
+  catch (error) {
+    if (error instanceof AppError && (error.status >= 500 || error.status === 403)) {
+      throw new AppError(503, "AUTH_SERVICE_UNAVAILABLE", "Sign-in and registration are temporarily unavailable. Please try again later.", { expose: true, cause: error });
+    }
+    throw error;
+  }
+}
+
 /** Verify credentials via the mu-plugin bridge (shared secret). Never stores the password. */
 export async function verifyWpCredentials(email: string, password: string): Promise<WpVerifiedUser> {
-  const payload = await httpJson<{
+  const payload = await accountRequest<{
     wpUserId: number;
     email: string;
     displayName: string;
@@ -36,7 +47,7 @@ export async function verifyWpCredentials(email: string, password: string): Prom
 /** Customer path: accept a site token and resolve the WordPress user once. */
 export async function resolveSiteToken(siteToken: string): Promise<WpVerifiedUser> {
   try {
-    const me = await httpJson<{ user: { id: number; email: string; display_name?: string } }>(
+    const me = await accountRequest<{ user: { id: number; email: string; display_name?: string } }>(
       `${config.WP_BASE_URL}/wp-json/ice-underwater/v1/me`,
       {
         headers: { Authorization: `Bearer ${siteToken}` },
@@ -49,7 +60,8 @@ export async function resolveSiteToken(siteToken: string): Promise<WpVerifiedUse
       displayName: me.user.display_name || "",
       roles: ["customer"],
     };
-  } catch {
+  } catch (error) {
+    if (error instanceof AppError && error.code === "AUTH_SERVICE_UNAVAILABLE") throw error;
     throw authRequired("Please sign in again.");
   }
 }
@@ -57,7 +69,7 @@ export async function resolveSiteToken(siteToken: string): Promise<WpVerifiedUse
 export async function registerWpCustomer(email: string, password: string, firstName: string): Promise<WpVerifiedUser> {
   const clean = normalizeEmail(email);
   try {
-    const payload = await httpJson<{ token?: string; user: { id: number; email: string; display_name?: string } }>(
+    const payload = await accountRequest<{ token?: string; user: { id: number; email: string; display_name?: string } }>(
       `${config.WP_BASE_URL}/wp-json/api/flutter_user/register`,
       {
         method: "POST",
@@ -78,8 +90,9 @@ export async function registerWpCustomer(email: string, password: string, firstN
       displayName: payload.user.display_name || firstName,
       roles: ["customer"],
     };
-  } catch {
-    const fallback = await httpJson<{ token?: string; user: { id: number; email: string; display_name?: string } }>(
+  } catch (error) {
+    if (error instanceof AppError && error.code === "AUTH_SERVICE_UNAVAILABLE") throw error;
+    const fallback = await accountRequest<{ token?: string; user: { id: number; email: string; display_name?: string } }>(
       `${config.WP_BASE_URL}/wp-json/ice-underwater/v1/register`,
       {
         method: "POST",
@@ -102,7 +115,7 @@ export async function createWpUserViaBridge(input: {
   displayName: string;
   roles: string[];
 }): Promise<WpVerifiedUser> {
-  const payload = await httpJson<WpVerifiedUser>(`${config.WP_BASE_URL}/wp-json/iuw-bridge/v1/create-user`, {
+  const payload = await accountRequest<WpVerifiedUser>(`${config.WP_BASE_URL}/wp-json/iuw-bridge/v1/create-user`, {
     method: "POST",
     headers: { "X-IUW-Bridge-Secret": config.WP_BRIDGE_SECRET },
     body: input,
