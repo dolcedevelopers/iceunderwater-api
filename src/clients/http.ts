@@ -29,6 +29,9 @@ export async function httpJson<T>(url: string, options: HttpJsonOptions = {}): P
       });
       const payload = (await response.json().catch(() => ({}))) as T & { message?: string; code?: string };
       if (!response.ok) {
+        if (response.status === 403 && /imunify360|bot.protection|IPs used for automation should be whitelisted/i.test(payload.message || "")) {
+          throw new AppError(503, "AUTH_SERVICE_UNAVAILABLE", "Sign-in and registration are temporarily unavailable. Please try again later.", { expose: true });
+        }
         const code =
           response.status === 409
             ? "CONFLICT"
@@ -50,7 +53,7 @@ export async function httpJson<T>(url: string, options: HttpJsonOptions = {}): P
     } catch (error) {
       lastError = error;
       // Do not retry client/auth conflicts — only transient upstream failures.
-      if (error instanceof AppError && error.status < 500) throw error;
+      if (error instanceof AppError && (error.status < 500 || error.code === "AUTH_SERVICE_UNAVAILABLE")) throw error;
       if (attempt === retries) break;
       await new Promise((r) => setTimeout(r, 200 * (attempt + 1)));
     } finally {

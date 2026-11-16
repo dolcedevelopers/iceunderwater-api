@@ -3,7 +3,7 @@ import {
   type Principal,
   type AdminRole,
 } from "../authz/permissions.js";
-import { accessDenied, authRequired, validationError } from "../lib/errors.js";
+import { AppError, accessDenied, authRequired, validationError } from "../lib/errors.js";
 import { normalizeEmail } from "../lib/ids.js";
 import {
   createWpUserViaBridge,
@@ -136,7 +136,10 @@ export async function login(input: {
 
   const principal = await principalFromWpUser(wpUser);
 
-  if (input.accountType !== principal.role) throw authRequired(`This is a ${principal.role} account. Choose the matching sign-in card.`);
+  if (input.accountType !== principal.role) {
+    const label = principal.role === "admin" ? "Administrator" : principal.role === "company" ? "Company" : principal.role === "supplier" ? "Supplier" : "Customer";
+    throw new AppError(403, "ACCOUNT_TYPE_MISMATCH", `Choose ${label} to sign in to this account.`);
+  }
 
   return {
     accessToken: await signAccessToken(principal),
