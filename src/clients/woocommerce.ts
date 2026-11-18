@@ -163,3 +163,7 @@ export async function pingWooCommerce(): Promise<boolean> {
     }
   }
 }
+
+export async function createWcCategory(name: string): Promise<{id:number;name:string}> {
+  return httpJson(wcUrl("/products/categories"),{method:"POST",headers:{Authorization:wcAuthHeader()},body:{name},retries:0});
+}

@@ -13,11 +13,12 @@ import { writeAudit } from "../repositories/auditRepo.js";
 import {
   findProductOwner,
   listProductsFromWp,
+  listProductMedia,
   softDeleteProductOwner,
   upsertProductOwner,
 } from "../repositories/productRepo.js";
 import { findSupplierById } from "../repositories/supplierRepo.js";
-import { createWcProduct, deleteWcProduct, listWcCategories, updateWcProduct } from "../clients/woocommerce.js";
+import { createWcProduct, deleteWcProduct, listWcCategories, createWcCategory, updateWcProduct } from "../clients/woocommerce.js";
 import { uploadImageBuffer } from "./mediaService.js";
 import { execute, query } from "../db/pool.js";
 import type { RowDataPacket } from "mysql2";
@@ -62,6 +63,43 @@ function mapProduct(row: {
 
 function stripHtml(value: string): string {
   return value.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+}
+
+export type ProductPhoto = {id?:number;src?:string};
+export async function validatedProductPhotos(photos: ProductPhoto[]) {
+  if (!Array.isArray(photos) || photos.length>5) throw validationError("A product can have a maximum of 5 photos.");
+  const ids=photos.filter(photo=>photo.id).map(photo=>Number(photo.id));
+  const known=await listProductMedia(ids);
+  return photos.map(photo=>{
+    if(photo.id){if(!Number.isSafeInteger(photo.id)||!known.some(media=>Number(media.id)===photo.id))throw validationError("Choose a valid product photo.");return {id:photo.id};}
+    try {const url=new URL(String(photo.src||""));if(url.origin!==new URL(config.WP_BASE_URL).origin||!url.pathname.startsWith("/wp-content/uploads/"))throw new Error();return {src:url.toString()};}
+    catch {throw validationError("Choose a photo uploaded to ICE UNDERWATER.");}
+  });
+}
+async function withProductPhotos(rows: Awaited<ReturnType<typeof listProductsFromWp>>) {
+  const idsFor=(row:typeof rows[number])=>[...new Set([Number(row.thumbnail_id),...String(row.gallery_ids||"").split(",").map(Number)].filter(id=>Number.isSafeInteger(id)&&id>0))];
+  const media=await listProductMedia(rows.flatMap(row=>idsFor(row).slice(0,5)));
+  return rows.map(row=>{const product=mapProduct(row);const photos=idsFor(row).map(id=>media.find(photo=>Number(photo.id)===id)).filter((photo):photo is {id:number;src:string}=>Boolean(photo));
+    if(product.image&&!photos.some(photo=>photo.src===product.image))photos.unshift({id:Number(row.thumbnail_id)||0,src:product.image});
+    return {...product,images:photos.slice(0,5),image:photos[0]?.src||product.image};
+  });
+}
+export async function listProductCategoriesFor(session: SessionLike) {
+  resolveSupplierScope(session);
+  return (await listWcCategories()).map(({id,name})=>({id:String(id),name}));
+}
+export async function createProductCategoryFor(session: SessionLike, name: string) {
+  resolveSupplierScope(session);
+  const clean=String(name||"").trim();if(!clean||clean.length>100)throw validationError("Enter a category name of up to 100 characters.");
+  const find=async()=> (await listWcCategories()).find(row=>row.name.trim().toLowerCase()===clean.toLowerCase());
+  const existing=await find();if(existing)return {id:String(existing.id),name:existing.name};
+  let created;
+  try{created=await createWcCategory(clean);}catch(error){if(/already exists/i.test((error as Error).message)){const match=await find();if(match)return {id:String(match.id),name:match.name};}throw error;}
+  return {id:String(created.id),name:created.name};
+}
+export async function uploadProductPhotoFor(session:SessionLike,buffer:Buffer,filename:string,supplierId?:string) {
+  resolveSupplierScope(session,supplierId);
+  const photo=await uploadImageBuffer(buffer,filename);return {id:photo.mediaId,src:photo.url};
 }
 
 async function markupForSupplier(supplierId: string): Promise<number> {
@@ -127,17 +165,17 @@ function catalogueTier(session: SessionLike): "company" | "supplier" | undefined
     if (session?.businessStatus !== "active") throw accessDenied("Your company must be approved before browsing suppliers.");
     return "supplier";
   }
-  return "company";
+  return undefined;
 }
 export async function listPublicProducts(session: SessionLike = null) {
   const rows = await listProductsFromWp({ publicOnly: true, businessType: catalogueTier(session) });
-  return rows.map((row) => { const { costPrice, markupPercent, ...product } = mapProduct(row); return product; });
+  return (await withProductPhotos(rows)).map(({costPrice,markupPercent,...product})=>product);
 }
 
 export async function getPublicProduct(id: string, session: SessionLike = null) {
   const rows = await listProductsFromWp({ publicOnly: true, productId: Number(id), businessType: catalogueTier(session) });
   if (!rows[0]) return null;
-  const { costPrice, markupPercent, ...product } = mapProduct(rows[0]);
+  const { costPrice, markupPercent, ...product } = (await withProductPhotos(rows))[0]!;
   return product;
 }
 
@@ -156,7 +194,7 @@ export async function listCatalogueCategories(session: SessionLike = null) {
 export async function listManagedProducts(session: SessionLike, supplierId?: string) {
   const scope = resolveSupplierScope(session, supplierId);
   const rows = await listProductsFromWp({ supplierId: scope });
-  return rows.map(mapProduct);
+  return withProductPhotos(rows);
 }
 
 /** Recompute Woo selling prices for every product owned by a supplier (after markup change). */
@@ -191,6 +229,7 @@ export async function createProductFor(
     price?: number;
     stock?: number;
     unit?: string;
+    images?: ProductPhoto[];
     description?: string;
     active?: boolean;
   },
@@ -216,6 +255,7 @@ export async function createProductFor(
     catalog_visibility: "visible",
     status: data.active === false ? "draft" : "publish",
     categories: categoryId ? [{ id: categoryId }] : undefined,
+    images: data.images !== undefined ? await validatedProductPhotos(data.images) : undefined,
     meta_data: [
       { key: "_iuw_supplier_id", value: scope },
       { key: "_iuw_unit", value: data.unit || "" },
@@ -225,7 +265,7 @@ export async function createProductFor(
   await upsertProductOwner(wc.id, scope);
   const product = (await listProductsFromWp({ productId: wc.id }))[0];
   const dto = product
-    ? mapProduct(product)
+    ? (await withProductPhotos([product]))[0]!
     : {
         id: String(wc.id),
         supplierId: scope,
@@ -270,6 +310,7 @@ export async function updateProductFor(
   }
 
   const meta: { key: string; value: string }[] = [];
+  if (changes.images !== undefined) {patch.images=await validatedProductPhotos(changes.images as ProductPhoto[]);meta.push({key:"_iuw_image_url",value:""});}
   if (typeof changes.unit === "string") meta.push({ key: "_iuw_unit", value: changes.unit });
 
   const costRaw =
@@ -290,7 +331,7 @@ export async function updateProductFor(
 
   await updateWcProduct(Number(productId), patch);
   const row = (await listProductsFromWp({ productId: Number(productId) }))[0];
-  const dto = row ? mapProduct(row) : null;
+  const dto = row ? (await withProductPhotos([row]))[0]! : null;
   await writeAudit({
     session,
     action: "product.update",

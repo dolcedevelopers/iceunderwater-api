@@ -245,11 +245,12 @@ it("returns supplier refund contacts only to the buyer view", async () => {
 });
 
 describe("business sales channels", () => {
-  it("never offers wholesale suppliers to customers", async () => {
+  it("allows customers to request wholesale suppliers too", async () => {
     vi.mocked(suppliers.listSuppliers).mockResolvedValue([{ id:"a", business_type:"supplier", city:"Johannesburg", province:"Gauteng" }] as never);
-    await expect(createPurchaseRequestFor(customer,{wcProductId:5,qty:1})).rejects.toThrow();
-    expect(insertNotification).not.toHaveBeenCalled();
-    expect(await listPurchaseSuppliersFor(customer)).toEqual([]);
+    await createPurchaseRequestFor(customer,{wcProductId:5,qty:1});
+    expect(requests.insertPurchaseOffers).toHaveBeenCalledWith(expect.any(String),["a"]);
+    expect(insertNotification).toHaveBeenCalledWith(expect.objectContaining({recipientId:"a"}));
+    expect((await listPurchaseSuppliersFor(customer)).map(row=>row.id)).toEqual(["a"]);
   });
   it("never offers retail companies to companies buying stock", async () => {
     vi.mocked(suppliers.listSuppliers).mockResolvedValue([{ id:"a", business_type:"company", city:"Johannesburg", province:"Gauteng" }] as never);

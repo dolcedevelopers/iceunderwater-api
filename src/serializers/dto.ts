@@ -42,6 +42,7 @@ export type ProductDto = {
   unit: string;
   description: string;
   image: string;
+  images?: { id: number; src: string }[];
   active: boolean;
 };
 

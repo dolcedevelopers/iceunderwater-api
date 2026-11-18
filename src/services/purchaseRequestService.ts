@@ -135,14 +135,14 @@ function buyerLabel(requesterSupplierId: string | null): string {
 export async function listPurchaseSuppliersFor(session: SessionLike) {
   const requester = requesterOf(session);
   const [suppliers, history] = await Promise.all([
-    listSuppliers({ status: "active", businessType: requester.supplierId ? "supplier" : "company" }),
+    listSuppliers({ status: "active", businessType: requester.supplierId ? "supplier" : undefined }),
     listPurchaseRequests(requester.supplierId
       ? { supplierId: requester.supplierId }
       : { customerWpUserId: requester.principal.wpUserId }),
   ]);
   const previous = new Set(history.filter((row) => ownsRequest(row, requester) && row.status === "paid")
     .map((row) => row.accepted_supplier_id));
-  return suppliers.filter((row) => (row.business_type || "company") === (requester.supplierId ? "supplier" : "company") && row.id !== requester.supplierId).map((row) => ({
+  return suppliers.filter((row) => (!requester.supplierId || (row.business_type || "company") === "supplier") && row.id !== requester.supplierId).map((row) => ({
     id: row.id, name: row.name, city: row.city, previous: previous.has(row.id),
   }));
 }
@@ -150,10 +150,10 @@ export async function listPurchaseSuppliersFor(session: SessionLike) {
 async function eligibleSuppliers(session: SessionLike, wcProductId: number, qty: number, location: RequestLocation) {
   const requester = requesterOf(session);
   const [suppliers, stockingIds] = await Promise.all([
-    listSuppliers({ status: "active", businessType: requester.supplierId ? "supplier" : "company" }), listStockingSupplierIds(wcProductId, qty),
+    listSuppliers({ status: "active", businessType: requester.supplierId ? "supplier" : undefined }), listStockingSupplierIds(wcProductId, qty),
   ]);
   const stocking = new Set(stockingIds);
-  return suppliers.filter((supplier) => (supplier.business_type || "company") === (requester.supplierId ? "supplier" : "company") && supplier.id !== requester.supplierId
+  return suppliers.filter((supplier) => (!requester.supplierId || (supplier.business_type || "company") === "supplier") && supplier.id !== requester.supplierId
     && stocking.has(supplier.id) && supplierServesLocation(supplier, location));
 }
 
@@ -327,7 +327,7 @@ export async function acceptPurchaseRequestFor(session: SessionLike, id: string,
   const accepted = await acceptPurchaseRequest(id, scope, (current) =>
     buildCheckoutUrl(Number(current.wc_product_id), Number(current.qty), current.id),
     async (current, supplier, connection) => {
-      if ((supplier.business_type || "company") !== (current.requester_supplier_id ? "supplier" : "company")) throw accessDenied("This request belongs to a different sales channel.");
+      if (current.requester_supplier_id && (supplier.business_type || "company") !== "supplier") throw accessDenied("This request belongs to a different sales channel.");
       const location = requestLocation(mapRequest(current).location);
       const stocking = await listStockingSupplierIds(Number(current.wc_product_id), Number(current.qty), connection);
       if (!stocking.includes(scope) || !supplierServesLocation(supplier, location)) {
@@ -339,7 +339,7 @@ export async function acceptPurchaseRequestFor(session: SessionLike, id: string,
   await insertNotification({
     recipientKind: "wp",
     recipientId: String(row.customer_wp_user_id),
-    title: "Company accepted your request",
+    title: "Seller accepted your request",
     body: `Pay on the website to complete ${row.product_name}.`,
     kind: "purchase_accepted",
     refType: "purchase_request",

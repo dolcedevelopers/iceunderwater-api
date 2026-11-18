@@ -89,13 +89,13 @@ export async function listCompaniesDirectory(
     businessType?: "company" | "supplier";
   } = {},
 ) {
-  const businessType = opts.businessType || "company";
+  const businessType = opts.businessType;
   if (businessType === "supplier") {
     requireRole(session, ROLES.COMPANY, ROLES.ADMIN);
     if (isCompany(session) && session?.businessStatus !== "active") throw accessDenied("Your company must be approved first.");
   } else requireRole(session, ROLES.CUSTOMER, ROLES.ADMIN);
   const showInternal = isAdmin(session);
-  const rows = (await listSuppliers({ status: "active", businessType })).filter((row) => (row.business_type || "company") === businessType).map((row) => {
+  const rows = (await listSuppliers({ status: "active", businessType })).filter((row) => !businessType || (row.business_type || "company") === businessType).map((row) => {
     const dto = mapSupplier(row);
     return showInternal ? dto : toDirectoryEntry(dto);
   });
@@ -148,7 +148,6 @@ export async function getSupplierFor(session: SessionLike, supplierId: string) {
 export async function getSupplierBrand(supplierId: string, session: SessionLike = null) {
   const row = await findSupplierById(supplierId);
   if (!row || row.status !== "active") return null;
-  if (row.business_type === "supplier" && !isAdmin(session) && !(isCompany(session) && session?.businessStatus === "active") && !(isBusiness(session) && session?.supplierId === row.id)) return null;
   return { id: row.id, name: row.name, logo: publicHttpsUrl(row.logo_url), businessType: row.business_type || "company" };
 }
 

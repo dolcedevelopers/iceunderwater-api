@@ -2,7 +2,7 @@ import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { requireAuth } from "../plugins/auth.js";
 import { myRsvp, saveRsvp, cancelRsvp, rsvpSummary, rsvpAttendees, rsvpExport } from "../services/eventRsvpService.js";
-const place = z.object({ province: z.string().min(1).max(80), city: z.string().min(1).max(120) }).strict();
+const place = z.object({ firstName: z.string().trim().min(1).max(100).optional(), lastName: z.string().trim().min(1).max(100).optional(), province: z.string().min(1).max(80), city: z.string().min(1).max(120) }).strict();
 const eventRsvps: FastifyPluginAsync = async app => {
   app.get("/events/warrior-kings/rsvp", req => myRsvp(requireAuth(req)));
   app.put("/events/warrior-kings/rsvp", req => saveRsvp(requireAuth(req), place.parse(req.body)));

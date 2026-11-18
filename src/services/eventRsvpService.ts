@@ -6,24 +6,30 @@ import { makeId } from "../lib/ids.js";
 import { selectedCity } from "../lib/serviceArea.js";
 
 export const RSVP_EVENT_KEY = "warrior-kings";
-type RsvpRow = RowDataPacket & { id: string; event_key: string; wp_user_id: number; email: string; province: string; city: string; status: string; updated_at: Date };
+type RsvpRow = RowDataPacket & { id: string; event_key: string; wp_user_id: number; email: string; first_name?: string; last_name?: string; profile_first_name?: string; profile_last_name?: string; display_name?: string; province: string; city: string; status: string; updated_at: Date };
 function attendee(session: SessionLike) {
   const person = requireRole(session, ROLES.CUSTOMER, ROLES.SUPPLIER, ROLES.COMPANY, ROLES.ADMIN);
   if (!Number.isSafeInteger(person.wpUserId) || person.wpUserId <= 0) throw validationError("Sign in with your customer account to RSVP.");
   return person;
 }
-function dto(row: RsvpRow) { return { id: row.id, eventKey: row.event_key, province: row.province, city: row.city, status: row.status, updatedAt: new Date(row.updated_at).toISOString() }; }
+const selectGuests = `SELECT r.*, u.display_name,
+  (SELECT meta_value FROM wp_usermeta WHERE user_id=r.wp_user_id AND meta_key='first_name' ORDER BY umeta_id DESC LIMIT 1) AS profile_first_name,
+  (SELECT meta_value FROM wp_usermeta WHERE user_id=r.wp_user_id AND meta_key='last_name' ORDER BY umeta_id DESC LIMIT 1) AS profile_last_name
+  FROM iuw_event_rsvps r LEFT JOIN wp_users u ON u.ID=r.wp_user_id`;
+function dto(row: RsvpRow) { const firstName=row.first_name || row.profile_first_name || ""; const lastName=row.last_name || row.profile_last_name || ""; return { firstName,lastName,fullName:[firstName,lastName].filter(Boolean).join(" ") || row.display_name || "", id: row.id, eventKey: row.event_key, province: row.province, city: row.city, status: row.status, updatedAt: new Date(row.updated_at).toISOString() }; }
 export async function myRsvp(session: SessionLike) {
   const person = attendee(session);
-  const rows = await query<RsvpRow[]>("SELECT * FROM iuw_event_rsvps WHERE event_key = :event AND wp_user_id = :user", { event: RSVP_EVENT_KEY, user: person.wpUserId });
+  const rows = await query<RsvpRow[]>(`${selectGuests} WHERE r.event_key = :event AND r.wp_user_id = :user`, { event: RSVP_EVENT_KEY, user: person.wpUserId });
   return rows[0] ? dto(rows[0]) : null;
 }
-export async function saveRsvp(session: SessionLike, place: { province: string; city: string }) {
+export async function saveRsvp(session: SessionLike, place: { province: string; city: string; firstName?: string; lastName?: string }) {
   const person = attendee(session); const location = selectedCity(place.province, place.city);
-  await execute(`INSERT INTO iuw_event_rsvps (id,event_key,wp_user_id,email,province,city,status)
-    VALUES (:id,:event,:user,:email,:province,:city,'confirmed')
-    ON DUPLICATE KEY UPDATE email=VALUES(email), province=VALUES(province), city=VALUES(city), status='confirmed', updated_at=UTC_TIMESTAMP(3)`,
-    { id: makeId("rsvp"), event: RSVP_EVENT_KEY, user: person.wpUserId, email: person.email, ...location });
+  const firstName=String(place.firstName || "").trim(), lastName=String(place.lastName || "").trim();
+  if ((place.firstName !== undefined || place.lastName !== undefined) && (!firstName || !lastName || firstName.length>100 || lastName.length>100)) throw validationError("Enter your first name and surname (up to 100 characters each).");
+  await execute(`INSERT INTO iuw_event_rsvps (id,event_key,wp_user_id,email,first_name,last_name,province,city,status)
+    VALUES (:id,:event,:user,:email,:firstName,:lastName,:province,:city,'confirmed')
+    ON DUPLICATE KEY UPDATE first_name=IF(VALUES(first_name)='',first_name,VALUES(first_name)), last_name=IF(VALUES(last_name)='',last_name,VALUES(last_name)), email=VALUES(email), province=VALUES(province), city=VALUES(city), status='confirmed', updated_at=UTC_TIMESTAMP(3)`,
+    { id: makeId("rsvp"), event: RSVP_EVENT_KEY, user: person.wpUserId, email: person.email, firstName, lastName, ...location });
   return myRsvp(person);
 }
 export async function cancelRsvp(session: SessionLike) {
@@ -42,17 +48,17 @@ export async function rsvpSummary(session: SessionLike) {
 }
 export async function rsvpAttendees(session: SessionLike, options: {page?:number;search?:string}={}) {
   requireAdmin(session);
-  const page=options.page||1;const needle=(options.search||"").trim();const filter=needle?" AND (email LIKE :search OR city LIKE :search OR province LIKE :search)":"";
+  const page=options.page||1;const needle=(options.search||"").trim();const filter=needle?" AND (r.email LIKE :search OR r.first_name LIKE :search OR r.last_name LIKE :search OR u.display_name LIKE :search OR r.city LIKE :search OR r.province LIKE :search)":"";
   const params={event:RSVP_EVENT_KEY,...(needle?{search:`%${needle}%`}:{})};
-  const total=await query<(RowDataPacket & {count:number})[]>(`SELECT COUNT(*) AS count FROM iuw_event_rsvps WHERE event_key=:event AND status='confirmed'${filter}`,params);
-  const rows=await query<RsvpRow[]>(`SELECT * FROM iuw_event_rsvps WHERE event_key=:event AND status='confirmed'${filter} ORDER BY city,email LIMIT 50 OFFSET ${(page-1)*50}`,params);
+  const total=await query<(RowDataPacket & {count:number})[]>(`SELECT COUNT(*) AS count FROM iuw_event_rsvps r LEFT JOIN wp_users u ON u.ID=r.wp_user_id WHERE r.event_key=:event AND r.status='confirmed'${filter}`,params);
+  const rows=await query<RsvpRow[]>(`${selectGuests} WHERE r.event_key=:event AND r.status='confirmed'${filter} ORDER BY r.city,r.last_name,r.first_name,r.email LIMIT 50 OFFSET ${(page-1)*50}`,params);
   return {items:rows.map(row=>({...dto(row),email:row.email})),total:Number(total[0]?.count||0),page,pageSize:50};
 }
 
 export function csvCell(value: string) { return '"' + (/^(?:\s*[=+@\-]|[\t\r])/.test(value) ? "'" : "") + value.replace(/"/g, '""') + '"'; }
 export async function rsvpExport(session: SessionLike) {
   requireAdmin(session);
-  const records=await query<RsvpRow[]>("SELECT * FROM iuw_event_rsvps WHERE event_key=:event AND status='confirmed' ORDER BY city,email",{event:RSVP_EVENT_KEY});
+  const records=await query<RsvpRow[]>(`${selectGuests} WHERE r.event_key=:event AND r.status='confirmed' ORDER BY r.city,r.last_name,r.first_name,r.email`,{event:RSVP_EVENT_KEY});
   const rows=records.map(row=>({...dto(row),email:row.email}));
-  return { filename: "warrior-kings-rsvps.csv", content: "Email,Province,City,Status,Updated\r\n" + rows.map(r => [r.email,r.province,r.city,r.status,r.updatedAt].map(csvCell).join(",")).join("\r\n") };
+  return { filename: "warrior-kings-rsvps.csv", content: "First name,Surname,Email,Province,City,Status,Updated\r\n" + rows.map(r => [r.firstName,r.lastName,r.email,r.province,r.city,r.status,r.updatedAt].map(csvCell).join(",")).join("\r\n") };
 }

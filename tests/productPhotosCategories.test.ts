@@ -1,0 +1,15 @@
+import { beforeEach, expect, it, vi } from "vitest";
+import { validatedProductPhotos, createProductCategoryFor, listProductCategoriesFor } from "../src/services/productService.js";
+import { listProductMedia } from "../src/repositories/productRepo.js";
+import { listWcCategories, createWcCategory } from "../src/clients/woocommerce.js";
+vi.mock("../src/repositories/productRepo.js",()=>({listProductMedia:vi.fn(),findProductOwner:vi.fn(),listProductsFromWp:vi.fn(),softDeleteProductOwner:vi.fn(),upsertProductOwner:vi.fn()}));
+vi.mock("../src/clients/woocommerce.js",()=>({listWcCategories:vi.fn(),createWcCategory:vi.fn(),createWcProduct:vi.fn(),updateWcProduct:vi.fn(),deleteWcProduct:vi.fn()}));
+const business={sub:1,wpUserId:1,email:"a@example.test",role:"company" as const,supplierId:"own"};
+beforeEach(()=>{vi.resetAllMocks();vi.mocked(listProductMedia).mockImplementation(async ids=>ids.filter(id=>id<=5).map(id=>({id,src:`https://iceunderwater.co.za/wp-content/uploads/${id}.jpg`})));vi.mocked(listWcCategories).mockResolvedValue([{id:1,name:"Ice Bags",count:2}]);});
+it("accepts and preserves the order of five valid product photos",async()=>{expect(await validatedProductPhotos([{id:3},{id:1},{id:5},{id:2},{id:4}])).toEqual([{id:3},{id:1},{id:5},{id:2},{id:4}]);});
+it("rejects a sixth photo before doing media work",async()=>{await expect(validatedProductPhotos(Array.from({length:6},(_,i)=>({id:i+1})))).rejects.toMatchObject({status:400});expect(listProductMedia).not.toHaveBeenCalled();});
+it("rejects missing media, external URLs and non-upload paths",async()=>{for(const photo of [{id:999},{src:"https://example.test/x.jpg"},{src:"https://iceunderwater.co.za/admin"}])await expect(validatedProductPhotos([photo])).rejects.toMatchObject({status:400});});
+it("allows keeping a legacy hosted image and removing all pictures",async()=>{expect(await validatedProductPhotos([{src:"https://iceunderwater.co.za/wp-content/uploads/old.jpg"}])).toEqual([{src:"https://iceunderwater.co.za/wp-content/uploads/old.jpg"}]);expect(await validatedProductPhotos([])).toEqual([]);});
+it("keeps category administration out of customer hands",async()=>{await expect(listProductCategoriesFor({...business,role:"customer"})).rejects.toMatchObject({status:403});await expect(createProductCategoryFor({...business,role:"customer"},"New")).rejects.toMatchObject({status:403});expect(createWcCategory).not.toHaveBeenCalled();});
+it("reuses category names without creating duplicates",async()=>{expect(await createProductCategoryFor(business," ice bags ")).toEqual({id:"1",name:"Ice Bags"});expect(createWcCategory).not.toHaveBeenCalled();});
+it("creates a new category for a business",async()=>{vi.mocked(createWcCategory).mockResolvedValue({id:2,name:"Sports Bottles"});expect(await createProductCategoryFor(business," Sports Bottles ")).toEqual({id:"2",name:"Sports Bottles"});expect(createWcCategory).toHaveBeenCalledWith("Sports Bottles");});

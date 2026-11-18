@@ -5,7 +5,7 @@ import mysql from "mysql2/promise";
 import { config } from "../config.js";
 import { parseDatabaseUrl } from "./connectionOptions.js";
 import { ensureLiveSchemaOnConnection } from "./ensureSchema.js";
-import { ensureDeliverySchemaOnConnection, ensureBusinessSchemaOnConnection } from "./featureSchema.js";
+import { ensureDeliverySchemaOnConnection, ensureBusinessSchemaOnConnection, ensureRsvpNamesOnConnection } from "./featureSchema.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const migrationsDir = path.resolve(__dirname, "../../migrations");
@@ -35,7 +35,9 @@ async function applyFileMigrations(conn: mysql.Connection): Promise<void> {
     );
     if (existing[0]) continue;
 
-    if(id === "018_business_roles") {
+    if (id === "019_rsvp_guest_names") {
+      await ensureRsvpNamesOnConnection(conn);
+    } else if(id === "018_business_roles") {
       await ensureBusinessSchemaOnConnection(conn);
     } else if (id === "017_delivery_handover") {
       // Startup may already have repaired some columns, or an earlier ALTER

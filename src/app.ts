@@ -83,7 +83,7 @@ export async function buildApp() {
   await app.register(authPlugin);
 
   /** Liveness for Render — always 200 once the process is up. */
-  app.get("/live", async () => ({ status: "ok", release: "0.2.23-auth.1", time: new Date().toISOString() }));
+  app.get("/live", async () => ({ status: "ok", release: "0.2.24-catalogue-rsvp.1", time: new Date().toISOString() }));
 
   app.get("/ready", async (_request, reply) => {
     const [database,schema] = await Promise.all([pingDb(),featureSchemaReady()]);

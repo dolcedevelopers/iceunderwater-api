@@ -17,3 +17,12 @@ it("rejects a city from another province before saving",async()=>{await expect(s
 it("cancels only the caller's RSVP and excludes cancellations from admin statistics",async()=>{await cancelRsvp(buyer);expect(execute).toHaveBeenCalledWith(expect.stringContaining("wp_user_id=:user"),{user:7,event:"warrior-kings"});await rsvpSummary(admin);expect(query).toHaveBeenLastCalledWith(expect.stringContaining("status='confirmed'"),expect.anything());});
 it.each([rsvpSummary,rsvpAttendees,rsvpExport])("keeps the admin report private",async fn=>{await expect(fn(buyer)).rejects.toMatchObject({status:403});expect(query).not.toHaveBeenCalled();});
 it("escapes CSV formulas and quotes",()=>{expect(csvCell('=HYPERLINK("x")')).toBe('"\'=HYPERLINK(""x"")"');expect(csvCell("normal@example.test")).toBe('"normal@example.test"');});
+
+it("stores first name and surname against the authenticated RSVP",async()=>{await saveRsvp(buyer,{province:"Gauteng",city:"Pretoria",firstName:" Thandi ",lastName:" Dlamini "});expect(execute).toHaveBeenCalledWith(expect.stringContaining("first_name"),expect.objectContaining({user:7,firstName:"Thandi",lastName:"Dlamini"}));});
+it("rejects incomplete supplied guest names",async()=>{await expect(saveRsvp(buyer,{province:"Gauteng",city:"Pretoria",firstName:"Thandi",lastName:" "})).rejects.toMatchObject({status:400});expect(execute).not.toHaveBeenCalled();});
+it("includes names in the private guest list and CSV export",async()=>{
+ const row={id:"r",event_key:"warrior-kings",first_name:"Thandi",last_name:"Dlamini",email:buyer.email,province:"Gauteng",city:"Pretoria",status:"confirmed",updated_at:new Date()};
+ vi.mocked(query).mockResolvedValueOnce([{count:1}] as never).mockResolvedValueOnce([row] as never);
+ expect((await rsvpAttendees(admin,{search:"Thandi"})).items[0]).toMatchObject({firstName:"Thandi",lastName:"Dlamini",fullName:"Thandi Dlamini"});
+ vi.mocked(query).mockResolvedValue([row] as never);expect((await rsvpExport(admin)).content).toContain('"Thandi","Dlamini"');
+});

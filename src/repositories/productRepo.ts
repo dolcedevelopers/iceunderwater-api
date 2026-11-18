@@ -90,6 +90,8 @@ export async function listProductsFromWp(filter: {
     stock: number;
     description: string;
     image: string;
+    thumbnail_id?: number;
+    gallery_ids?: string;
     active: number;
     unit: string;
     in_stock: number;
@@ -150,6 +152,8 @@ export async function listProductsFromWp(filter: {
         END,
         ''
       ) AS image,
+      CAST(COALESCE(thumb.meta_value,0) AS UNSIGNED) AS thumbnail_id,
+      COALESCE(gallery.meta_value,'') AS gallery_ids,
       CASE WHEN p.post_status = 'publish' THEN 1 ELSE 0 END AS active,
       COALESCE(unit.meta_value, '') AS unit,
       CASE WHEN COALESCE(stockstatus.meta_value, 'instock') = 'outofstock' THEN 0 ELSE 1 END AS in_stock,
@@ -166,6 +170,7 @@ export async function listProductsFromWp(filter: {
      LEFT JOIN wp_postmeta stockstatus ON stockstatus.post_id = p.ID AND stockstatus.meta_key = '_stock_status'
      LEFT JOIN wp_postmeta unit ON unit.post_id = p.ID AND unit.meta_key = '_iuw_unit'
      LEFT JOIN wp_postmeta imgurl ON imgurl.post_id = p.ID AND imgurl.meta_key = '_iuw_image_url'
+     LEFT JOIN wp_postmeta gallery ON gallery.post_id = p.ID AND gallery.meta_key = '_product_image_gallery'
      LEFT JOIN wp_postmeta thumb ON thumb.post_id = p.ID AND thumb.meta_key = '_thumbnail_id'
      LEFT JOIN wp_posts img ON img.ID = thumb.meta_value
      LEFT JOIN wp_postmeta file ON file.post_id = img.ID AND file.meta_key = '_wp_attached_file'
@@ -197,4 +202,16 @@ export async function listStockingSupplierIds(wcProductId: number, qty: number, 
     ? (await connection.query<(RowDataPacket & { supplier_id: string })[]>(sql, { wcProductId, qty }))[0]
     : await query<(RowDataPacket & { supplier_id: string })[]>(sql, { wcProductId, qty });
   return rows.map((row) => row.supplier_id);
+}
+
+/** Read public attachment URLs in one batch; no per-product Woo requests. */
+export async function listProductMedia(ids: number[]): Promise<{id:number;src:string}[]> {
+  const unique=[...new Set(ids.filter(id=>Number.isSafeInteger(id)&&id>0))];
+  if(!unique.length)return [];
+  return query<(RowDataPacket & {id:number;src:string})[]>(`SELECT p.ID AS id,
+    CASE WHEN f.meta_value IS NOT NULL AND f.meta_value<>'' THEN CONCAT(TRIM(TRAILING '/' FROM REPLACE(site.option_value,'http://','https://')),'/wp-content/uploads/',f.meta_value)
+    ELSE REPLACE(p.guid,'http://','https://') END AS src
+    FROM wp_posts p LEFT JOIN wp_postmeta f ON f.post_id=p.ID AND f.meta_key='_wp_attached_file'
+    LEFT JOIN wp_options site ON site.option_name='siteurl'
+    WHERE p.ID IN (:ids) AND p.post_type='attachment' AND p.post_status<>'trash' AND p.post_mime_type LIKE 'image/%'`,{ids:unique});
 }

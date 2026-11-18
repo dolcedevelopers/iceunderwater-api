@@ -1,0 +1,2 @@
+ALTER TABLE iuw_event_rsvps ADD COLUMN first_name VARCHAR(100) NOT NULL DEFAULT '';
+ALTER TABLE iuw_event_rsvps ADD COLUMN last_name VARCHAR(100) NOT NULL DEFAULT '';

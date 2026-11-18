@@ -61,11 +61,22 @@ export async function ensureRsvpSchemaOnConnection(conn: SchemaConn) {
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
 }
 
+export async function ensureRsvpNamesOnConnection(conn: SchemaConn) {
+  await ensureRsvpSchemaOnConnection(conn);
+  for (const column of ["first_name", "last_name"]) {
+    const [rows] = await conn.query("SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=? AND COLUMN_NAME=?", ["iuw_event_rsvps", column]);
+    if (!(rows as unknown[]).length) {
+      try { await conn.query(`ALTER TABLE iuw_event_rsvps ADD COLUMN ${column} VARCHAR(100) NOT NULL DEFAULT ''`); }
+      catch (error) { if ((error as {code?:string}).code !== "ER_DUP_FIELDNAME") throw error; }
+    }
+  }
+}
+
 const probes = [
   "SELECT business_type FROM iuw_suppliers LIMIT 0",
   `SELECT ${Object.keys(deliveryColumns).join(",")} FROM iuw_deliveries LIMIT 0`,
   "SELECT details FROM iuw_delivery_events LIMIT 0",
-  "SELECT id,event_key,wp_user_id,email,province,city,status,created_at,updated_at FROM iuw_event_rsvps LIMIT 0",
+  "SELECT id,event_key,wp_user_id,email,first_name,last_name,province,city,status,created_at,updated_at FROM iuw_event_rsvps LIMIT 0",
 ];
 
 /** Fail startup before starting the worker if the runtime database is incomplete. */

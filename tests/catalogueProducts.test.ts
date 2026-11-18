@@ -1,7 +1,7 @@
 import { beforeEach, expect, it, vi } from "vitest";
 import { listPublicProducts, getPublicProduct, listManagedProducts } from "../src/services/productService.js";
-import { listProductsFromWp } from "../src/repositories/productRepo.js";
-vi.mock("../src/repositories/productRepo.js", async (original) => ({ ...await original<object>(), listProductsFromWp: vi.fn() }));
+import { listProductsFromWp, listProductMedia } from "../src/repositories/productRepo.js";
+vi.mock("../src/repositories/productRepo.js", async (original) => ({ ...await original<object>(), listProductsFromWp: vi.fn(), listProductMedia: vi.fn(async()=>[]) }));
 beforeEach(() => {
   vi.mocked(listProductsFromWp).mockResolvedValue([
     { id: 50, supplier_id: "", name: "WordPress item", price_cents: 23995, cost_cents: 20000, markup_percent: 20,
@@ -28,7 +28,7 @@ it("keeps cost and markup available in the authenticated supplier's own catalogu
 
 it("scopes catalogue queries by authenticated buying tier", async () => {
   await listPublicProducts();
-  expect(listProductsFromWp).toHaveBeenLastCalledWith({publicOnly:true,businessType:"company"});
+  expect(listProductsFromWp).toHaveBeenLastCalledWith({publicOnly:true,businessType:undefined});
   const company={sub:1,wpUserId:1,role:"company" as const,email:"buyer@example.com",businessStatus:"active" as const,supplierId:"b"};
   await listPublicProducts(company);
   expect(listProductsFromWp).toHaveBeenLastCalledWith({publicOnly:true,businessType:"supplier"});
@@ -36,4 +36,10 @@ it("scopes catalogue queries by authenticated buying tier", async () => {
   expect(listProductsFromWp).toHaveBeenLastCalledWith({publicOnly:true,productId:50,businessType:"supplier"});
   await expect(listPublicProducts({...company,businessStatus:"pending"})).rejects.toThrow();
   await expect(listPublicProducts({...company,role:"supplier"})).rejects.toThrow();
+});
+
+it("returns at most five pictures from WordPress gallery data",async()=>{
+ vi.mocked(listProductsFromWp).mockResolvedValue([{id:77,supplier_id:"a",name:"Water",price_cents:500,cost_cents:300,markup_percent:10,active:1,stock:10,image:"https://iceunderwater.co.za/wp-content/uploads/1.jpg",thumbnail_id:1,gallery_ids:"2,3,4,5,6,7",category:"Water",description:"",unit:"500 ml"}] as never);
+ vi.mocked(listProductMedia).mockImplementation(async ids=>ids.map(id=>({id,src:`https://iceunderwater.co.za/wp-content/uploads/${id}.jpg`})));
+ const products=await listPublicProducts();expect(products[0]!.images?.map(p=>p.id)).toEqual([1,2,3,4,5]);expect(products[0]).not.toHaveProperty("costPrice");
 });

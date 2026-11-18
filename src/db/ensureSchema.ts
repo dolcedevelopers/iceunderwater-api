@@ -1,6 +1,6 @@
 import type { Connection, PoolConnection, RowDataPacket } from "mysql2/promise";
 import { getPool } from "./pool.js";
-import { ensureBusinessSchemaOnConnection, assertFeatureSchemaOnConnection, ensureDeliverySchemaOnConnection, ensureRsvpSchemaOnConnection } from "./featureSchema.js";
+import { ensureBusinessSchemaOnConnection, assertFeatureSchemaOnConnection, ensureDeliverySchemaOnConnection, ensureRsvpSchemaOnConnection, ensureRsvpNamesOnConnection } from "./featureSchema.js";
 
 type CountRow = RowDataPacket & { n: number };
 type SchemaConn = Connection | PoolConnection;
@@ -65,7 +65,7 @@ export async function ensureLiveSchemaOnConnection(conn: SchemaConn): Promise<st
   const applied: string[] = [];
   applied.push(...await ensureBusinessSchemaOnConnection(conn));
   applied.push(...await ensureDeliverySchemaOnConnection(conn));
-  await ensureRsvpSchemaOnConnection(conn);
+  await ensureRsvpNamesOnConnection(conn);
   await addColumn(conn, "iuw_purchase_requests", "refund_status", "VARCHAR(16) NULL", applied);
   await addColumn(conn, "iuw_purchase_requests", "refund_reason", "TEXT NULL", applied);
   await addColumn(conn, "iuw_purchase_requests", "refund_requested_at", "DATETIME(3) NULL", applied);
